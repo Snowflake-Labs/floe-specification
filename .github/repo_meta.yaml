@@ -1,0 +1,11 @@
+# Make sure this file is valid yaml, otherwise it will not be recognized by security audits
+
+# point_of_contact: the owner of this repository, can be a GitHub user or GitHub team. Do NOT use the '@' symbol
+point_of_contact: sfc-gh-grubin
+
+# production: whether this repository meets the criteria for being "production", see
+# go/production-repository-criteria for criteria
+#
+# If this is not a production repository, set this field to false and delete
+# the rest of the fields below.
+production: false

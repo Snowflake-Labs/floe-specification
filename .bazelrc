@@ -1,0 +1,23 @@
+build:asan --repo_env=CC=/opt/homebrew/opt/llvm/bin/clang
+build:asan --repo_env=CCX=/opt/homebrew/opt/llvm/bin/clang
+build:asan --strip=never
+build:asan --copt -fsanitize=address
+build:asan --copt -DADDRESS_SANITIZER
+build:asan --copt -O1
+build:asan --copt -g
+build:asan --copt -fno-omit-frame-pointer
+build:asan --linkopt -fsanitize=address
+
+coverage --experimental_generate_llvm_lcov
+coverage --experimental_use_llvm_covmap
+coverage --repo_env=GCOV=/opt/homebrew/opt/llvm/bin/llvm-profdata
+coverage --repo_env=BAZEL_LLVM_COV=/opt/homebrew/opt/llvm/bin/llvm-cov
+coverage --repo_env=BAZEL_LLVM_PROFDATA=/opt/homebrew/opt/llvm/bin/llvm-profdata
+coverage --test_env=GENERATE_LLVM_LCOV=1
+coverage --test_env=COVERAGE_GCOV_PATH=/opt/homebrew/opt/llvm/bin/llvm-profdata
+coverage --test_env=LLVM_COV=/opt/homebrew/opt/llvm/bin/llvm-cov
+coverage --copt=-ffile-compilation-dir=.
+
+build --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect
+build --output_groups=+clippy_checks
+build --test_env=RUST_BACKTRACE=1

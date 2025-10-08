@@ -1,0 +1,82 @@
+# Copyright 2025 Snowflake Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+module(
+    name = "floe-reference-cpp",
+    version = "1.0",
+)
+
+# Might not be the exact versions but should be close enough
+bazel_dep(name = "openssl", version = "3.3.1.bcr.1")
+bazel_dep(name = "abseil-cpp", version = "20240116.0")
+
+# Pull in Maven dependencies
+JUNIT_JUPITER_VERSION = "5.12.2"
+
+JUNIT_PLATFORM_VERSION = "1.12.2"
+
+bazel_dep(name = "rules_jvm_external", version = "6.7")
+bazel_dep(name = "contrib_rules_jvm", version = "0.28.0")
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    artifacts = [
+        "org.junit.platform:junit-platform-launcher:%s" % JUNIT_PLATFORM_VERSION,
+        "org.junit.platform:junit-platform-reporting:%s" % JUNIT_PLATFORM_VERSION,
+        "org.junit.jupiter:junit-jupiter-api:%s" % JUNIT_JUPITER_VERSION,
+        "org.junit.jupiter:junit-jupiter-params:%s" % JUNIT_JUPITER_VERSION,
+        "org.junit.jupiter:junit-jupiter-engine:%s" % JUNIT_JUPITER_VERSION,
+        "commons-codec:commons-codec:1+",
+    ],
+    repositories = [
+        "https://repo1.maven.org/maven2",
+    ],
+)
+use_repo(maven, "maven")
+
+# Time for Go dependencies
+bazel_dep(
+    name = "rules_go",
+    version = "0.50.1",
+)
+bazel_dep(name = "gazelle", version = "0.43.0")
+
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(go_deps, "org_golang_x_crypto")
+
+# Rust dependencies
+bazel_dep(name = "rules_rust", version = "0.61.0")
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+)
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+
+crate.spec(package = "aead", features = ["std"], version = "0.5.2")
+crate.spec(package = "aes-gcm", version = "0.10.3")
+crate.spec(package = "sha2", version = "0.10.8")
+crate.spec(package = "rand", version = "0.9.1")
+crate.spec(package = "hmac", version = "0.12.1")
+crate.spec(package = "subtle", version = "2.6")
+crate.spec(package = "zeroize", features = ["zeroize_derive"], version = "1.8.1")
+crate.spec(package = "hex", version = "0.4.3")
+crate.spec(package = "dhat", version = "0.3.3")
+crate.spec(package = "criterion", version = "0.3", features = ["html_reports"])
+
+crate.from_specs()
+use_repo(crate, "crates")

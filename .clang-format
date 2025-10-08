@@ -1,0 +1,113 @@
+# Copyright 2025 Snowflake Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Our base style is Google. Unless explicitly specified otherwise,
+# we default to whatever they are using.
+BasedOnStyle: Google
+
+# Explicit changes / clarifications to the Google style. In particular:
+# - Allow wider lines (100 vs 80 characters).
+ColumnLimit: 100
+# - Force pointer alignment to the left (int* a, vs int *a)
+DerivePointerAlignment: false
+PointerAlignment: Left
+# - Ensure that loop bodies are always on their own line
+AllowShortLoopsOnASingleLine: false
+# - Ensure that we have new lines at the end of files
+InsertNewlineAtEOF: true
+# - Ensure that we format according to C++17 syntax rules.
+Standard: c++17
+
+# Explicitly manage our include order
+IncludeCategories:
+  # C standard headers (headers in angle brackets ending on .h without any paths)
+  - Regex:           '^<[^\/]*\.h>'
+    Priority:        1
+    SortPriority:    0
+  # Also include glibc headers here (i.e. anything starting with sys/)
+  - Regex:           '^<sys.*\.h>'
+    Priority:        1
+    SortPriority:    0
+  # C++ standard headers (headers in angle brackets, not ending on .h without any paths)
+  - Regex:           '^<[^\/]*>'
+    Priority:        2
+    SortPriority:    0
+  # Other library headers (all other headers in angle brackets)
+  - Regex:           '^<.*'
+    Priority:        3
+    SortPriority:    0
+  # Followed by every other project include
+  - Regex:           '.*'
+    Priority:        4
+    SortPriority:    0
+
+# Some of our macros take arguments that should not be formatted.
+WhitespaceSensitiveMacros: 
+  # The below macros are used to selectively enable/disable warnings.
+  # They take the name of a particular compiler warning option that
+  # should never be reformatted (e.g. SF_IGNORE_WARNING(pessimizing-move)
+  # should not become SF_IGNORE_WARNING(pessimizing - move), otherwise
+  # the build will nuke)
+  - SF_IGNORE_WARNING
+  - SF_ENABLE_WARNING
+  - SF_GCC_IGNORE_WARNING
+  - SF_GCC_ENABLE_WARNING
+  - SF_CLANG_IGNORE_WARNING
+  - SF_CLANG_ENABLE_WARNING
+
+# Some of our macros are used to deliminate blocks (e.g. for tracing) and should
+# be treated the same way a block specification would. Define them here.
+MacroBlockBegin: 'SF_TRACE_BLOCK_BEGIN'
+MacroBlockEnd: 'SF_TRACE_BLOCK_END'
+ 
+# Some of our macros (in particular for type enumeration) should be treated as
+# individual statements to ensure they are formatted right.
+StatementMacros:
+ - SF_TIMESTAMP_LOGICAL_TYPES
+ - SF_DATETIME_LOGICAL_TYPES
+ - SF_INTEGER_LOGICAL_TYPES
+ - SF_FP_LOGICAL_TYPES
+ - SF_STRING_LOGICAL_TYPES
+ - SF_VARIANT_LOGICAL_TYPES
+ - SF_NUMERIC_LOGICAL_TYPES
+ - SF_LOB_LOGICAL_TYPES
+ - SF_USER_LOGICAL_TYPES
+ - SF_LOGICAL_TYPES
+ - SF_NUMBER_LOGICAL_TYPES
+ - SF_NTS_USER_LOGICAL_TYPES
+ - SF_LOGICAL_PSEUDO_TYPES
+ - SF_PHYSICAL_FIXED_TYPES
+ - SF_PHYSICAL_REAL_TYPES
+ - SF_PHYSICAL_NUMERIC_TYPES
+ - SF_PHYSICAL_USER_TYPES
+ - SF_PHYSICAL_TYPES
+ - SF_PHYSICAL_FIXED_WIDEN
+ - SF_PHYSICAL_REAL_WIDEN
+ - SF_PHYSICAL_TYPE_WIDEN
+ - SF_PHYSICAL_FIXED_TO_REAL
+ - _W
+ - _T 
+
+QualifierAlignment: Custom
+QualifierOrder:
+ - static
+ - inline
+ - constexpr
+ - const
+ - friend
+ - volatile
+ - type
+ - restrict
+ 

@@ -1,0 +1,42 @@
+# Copyright 2025 Snowflake Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@contrib_rules_jvm//java:defs.bzl", "JUNIT5_DEPS", "java_test_suite")
+load("@rules_jvm_external//:defs.bzl", "artifact")
+
+java_library(
+    name = "floe_java_lib",
+    srcs = glob(["lib/src/main/java/**/*.java"]),
+    visibility = ["//visibility:public"],
+)
+
+java_test_suite(
+    name = "floe_java_lib_tests",
+    size = "small",
+    srcs = glob(["lib/src/test/java/**/*.java"]),
+    resources = ["//:test_kats"],
+    runner = "junit5",
+    test_suffixes = [
+        "Tests.java",
+        "Test.java",
+    ],
+    runtime_deps = JUNIT5_DEPS,
+    deps = [
+        ":floe_java_lib",
+        artifact("org.junit.jupiter:junit-jupiter-api"),
+        artifact("org.junit.jupiter:junit-jupiter-params"),
+        artifact("commons.codec:commons-codec"),
+    ],
+)
