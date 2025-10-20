@@ -346,7 +346,7 @@ public class StreamTest {
 
         final byte[] pt = new byte[params.getPlaintextSegmentLen()];
         Arrays.fill(pt, (byte) 1);
-        final Encryptor encryptor = floe.createEncryptor(key, "AAD".getBytes(StandardCharsets.UTF_8));
+        final SequentialEncryptor encryptor = floe.createEncryptor(key, "AAD".getBytes(StandardCharsets.UTF_8));
         final byte[] header = encryptor.getHeader();
         final byte[] ct = encryptor.processSegment(pt);
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -370,7 +370,7 @@ public class StreamTest {
 
         final byte[] pt = new byte[params.getPlaintextSegmentLen()];
         Arrays.fill(pt, (byte) 1);
-        final Encryptor encryptor = floe.createEncryptor(key, "AAD".getBytes(StandardCharsets.UTF_8));
+        final SequentialEncryptor encryptor = floe.createEncryptor(key, "AAD".getBytes(StandardCharsets.UTF_8));
         final byte[] header = encryptor.getHeader();
         final byte[] ct = encryptor.processSegment(pt);
         final byte[] ct2 = encryptor.processLastSegment(pt);
@@ -398,7 +398,7 @@ public class StreamTest {
 
         final byte[] pt = new byte[params.getPlaintextSegmentLen()];
         Arrays.fill(pt, (byte) 1);
-        final Encryptor encryptor = floe.createEncryptor(key, "AAD".getBytes(StandardCharsets.UTF_8));
+        final SequentialEncryptor encryptor = floe.createEncryptor(key, "AAD".getBytes(StandardCharsets.UTF_8));
         final byte[] header = encryptor.getHeader();
         final byte[] ct = encryptor.processSegment(pt);
         try (FloeDecryptingInputStream dis = floe.createDecryptor(key, "AAD".getBytes(StandardCharsets.UTF_8), new ByteArrayInputStream(ct), header)) {
@@ -422,7 +422,7 @@ public class StreamTest {
 
         final byte[] pt = new byte[params.getPlaintextSegmentLen()];
         Arrays.fill(pt, (byte) 1);
-        final Encryptor encryptor = floe.createEncryptor(key, "AAD".getBytes(StandardCharsets.UTF_8));
+        final SequentialEncryptor encryptor = floe.createEncryptor(key, "AAD".getBytes(StandardCharsets.UTF_8));
         final byte[] header = encryptor.getHeader();
         final byte[] ct = encryptor.processSegment(pt);
         final byte[] ct2 = encryptor.processLastSegment(pt);
@@ -717,7 +717,7 @@ public class StreamTest {
         }
     }
     private byte[] decrypt(Floe floe, SecretKey key, byte[] aad, byte[] ciphertext) throws Exception {
-        Decryptor decryptor = floe.createDecryptor(key, aad, ciphertext);
+        SequentialDecryptor decryptor = floe.createDecryptor(key, aad, ciphertext);
         FloeParameterSpec p = decryptor.getParameterSpec();
         final ByteArrayOutputStream baos = new ByteArrayOutputStream();
         for (int offset = p.getHeaderLen(); offset < ciphertext.length; offset += p.getEncryptedSegmentLength()) {

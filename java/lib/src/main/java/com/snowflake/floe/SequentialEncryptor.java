@@ -15,5 +15,6 @@
 
 package com.snowflake.floe;
 
-public interface Decryptor extends FloeSegmentProcessor {
+public interface SequentialEncryptor extends FloeSegmentProcessor {
+    byte[] getHeader();
 }

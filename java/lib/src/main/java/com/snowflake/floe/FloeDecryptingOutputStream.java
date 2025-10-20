@@ -29,7 +29,7 @@ public class FloeDecryptingOutputStream extends OutputStream implements FloeStre
     private final ByteBuffer headerBuffer;
     private final ByteBuffer ctBuffer;
     private final ByteBuffer ptBuffer;
-    private Decryptor floe;
+    private SequentialDecryptor floe;
     private boolean closed = false;
     private boolean inClosing = false;
 
@@ -95,7 +95,7 @@ public class FloeDecryptingOutputStream extends OutputStream implements FloeStre
         }
         try {
             floe.processLastSegment(ctBuffer, ptBuffer);
-        } catch (final IllegalArgumentException ex) {
+        } catch (final IllegalArgumentException | ArrayIndexOutOfBoundsException ex) {
             throw new IOException("Truncated ciphertext", ex);
         }
         closed = true;
