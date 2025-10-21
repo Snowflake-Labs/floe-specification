@@ -1,16 +1,16 @@
 # FLOE Specification
 
 Fast Lightweight Online Encryption (FLOE) is a secure random access authenticated encryption (raAE) scheme as defined in a soon to be published paper.
-All raAE schemes are also nOAE2 secure as defined by [HRRV15](https://eprint.iacr.org/2015/189).
+All secure (ra-ROR) raAE schemes are also nOAE2 secure as defined by [HRRV15](https://eprint.iacr.org/2015/189).
 FLOE is inspired heavily by the work in HRRV15 and others.
 FLOE can be thought of as a family of algorithms, each specified by a set a parameters.
 (This is similar to how [HPKE](https://www.rfc-editor.org/rfc/rfc9180.html) is defined.)
 
-This specification defined four *public* functions for the random access case (raAE): `startEncryption`, `encyptSegment` and their decryption equivalents.
+This specification defines four *public* functions for the random access case (raAE): `startEncryption`, `encryptSegment` and their decryption equivalents.
 For usecases that do not require random access, we strongly recommend that instead of exposing `encryptSegment` and `decryptSegment` that you expose the sequention/online equivalents of them:
 `encryptOnlineSegment`, `encryptLastSegment`, and their decryption equivalents.
-These four methods (along with the two `start` functions) support the nOAE2/online/sequential use case and are harder to misuse.
-An implementation may not choose to expose those methods directly to callers but instead implement its own API on top of the "official" FLOE functions.
+These four methods (along with the two `start` functions) support the online/sequential use case and are harder to misuse.
+An implementation may choose not to expose those methods directly to callers but instead implement its own API on top of the "official" FLOE functions.
 
 ## Terminology
 
@@ -65,13 +65,13 @@ These parameters are all defined implicitly by selection of one of the main para
   The maximum number of segments in a FLOE ciphertext which uses the selected AEAD.
   Implementations may place lower limits on what they are willing to produce or accept.
 
-| `KDF` | `KDF_ID` | `KDF_LEN` |
+| `KDF` | `KDF_ID` | `KDF_KEY_LEN` |
 | :---- | :---- | :---- |
 | HKDF-EXPAND-SHA-384 | 0 | 48 |
 
 - `KDF_ID`  
   An integer representing the selected KDF
-- `KDF_INTERMEDIATE_KEY_LEN`  
+- `KDF_KEY_LEN`  
   An integer representing the length, in bytes, of the key to derive for use as a KDF key
 
 ## FLOE Ciphertext Layout
@@ -162,7 +162,9 @@ Depending on how you implement the code, these may be inlined, provided by the p
 ### Semi-Public Functions (Random Access)
 
 FLOE can be defined in terms of four functions which support random access (as per the raAE definition).
-Generally these methods should be internal implementation details because they are not necessarily safe for direct access by developers.
+While this interface is a fully secure one (as per raAE) it does not protect developers against their own mistakes
+as much as the streaming/online interface.
+Thus, these methods should generally be internal implementation details.
 However, depending on the specific use-case, these APIs may be the correct level of abstraction to be made public.
 They are more challenging to use correctly because they no longer protect the developer from a number of mistakes:
 
@@ -172,7 +174,7 @@ They are more challenging to use correctly because they no longer protect the de
 - If a decryptor does not already know the correct length of the ciphertext (i.e., maximum position) then it is difficult for them to distiguish truncation versus just trying to read past the end.
 - If an adversary can cause a decryptor to attempt decryption of a valid segment with the incorrect position/terminal indicator, then FLOE loses commitment properties.
 
-In practice, this means that these API should likely not be exposed directly to developers but instead be use to construct higher-level (safe) APIs.
+In practice, this means that these API should likely not be exposed directly to developers but instead be used to construct higher-level (safe) APIs.
 For example, a developer of a client-side encryption library for cloud block storage, might choose to use FLOE.
 While they could simply use the online APIs above to stream the file to the cloud, using these random access APIs would permit them to spin up a number of threads to encrypt (and possibly upload) segments in parallel.
 Similarly, they could use these random access APIs to do random reads of the uploaded object.
@@ -183,7 +185,7 @@ startEncryption(key, aad) -> (State, Header)
 
   HeaderPrefix = PARAM_ENCODE(params) || iv
   HeaderTag = FLOE_KDF(key, iv, aad, "HEADER_TAG:", 32)
-  MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_LEN)
+  MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_KEY_LEN)
   Header = HeaderPrefix || HeaderTag
 
   State = {MessageKey, iv, aad}
@@ -202,7 +204,7 @@ startDecryption(key, aad, header) -> State
   if ctEq(ExpectedHeaderTag, HeaderTag) == FALSE: // Must be constant time
     throw("Invalid Header Tag")
 
-  MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_LEN)
+  MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_KEY_LEN)
   State = {MessageKey, iv, aad}
   return State
 ```
