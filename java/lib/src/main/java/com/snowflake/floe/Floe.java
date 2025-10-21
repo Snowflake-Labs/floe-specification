@@ -24,7 +24,6 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.spec.AlgorithmParameterSpec;
 import java.util.Arrays;
-import java.util.Base64;
 
 import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
@@ -42,6 +41,8 @@ public final class Floe {
     private static final byte[] HEADER_TAG_PURPOSE = "HEADER_TAG:".getBytes(StandardCharsets.UTF_8);
     private static final byte[] MESSAGE_KEY_PURPOSE = "MESSAGE_KEY:".getBytes(StandardCharsets.UTF_8);
     private static final byte[] EMPTY_ARRAY = new byte[0];
+    private static final int HEADER_TAG_SIZE = 32;
+    private static final int SEGMENT_LENGTH_SIZE = 4;
 
     private final ThreadLocal<SecureRandom> random;
     private final FloeParameterSpec params;
@@ -57,7 +58,7 @@ public final class Floe {
 
     private Floe(final FloeParameterSpec params, SecureRandom rndOverride) {
         this.params = params;
-        segmentPlaintextOverhead = 4 + params.getAead().getNonceLength() + params.getAead().getTagLength();
+        segmentPlaintextOverhead = SEGMENT_LENGTH_SIZE + params.getAead().getNonceLength() + params.getAead().getTagLength();
         if (rndOverride == null) {
             // By default we use thread local secure random for better performance, not for correctness
             random = ThreadLocal.withInitial(SecureRandom::new);
@@ -353,7 +354,7 @@ public final class Floe {
         private final byte[] floeAad;
         private final Cipher cipher;
         private final int segmentLengthOffset = 0;
-        private final int segmentIvOffset = segmentLengthOffset + 4;
+        private final int segmentIvOffset = segmentLengthOffset + SEGMENT_LENGTH_SIZE;
         private final int segmentCiphertextOffset = segmentIvOffset + params.getAead().getNonceLength();
 
         private FloeRandomAccess(final SecretKey messageKey, final byte[] floeIv, final byte[] floeAad) {
@@ -406,9 +407,9 @@ public final class Floe {
                 System.arraycopy(aeadIv, 0, ciphertext, ciphertextOffset + segmentIvOffset, aeadIv.length);
 
                 if (isFinal) {
-                    i2be(plaintextLength + segmentPlaintextOverhead, 4, ciphertext, ciphertextOffset + segmentLengthOffset);
+                    i2be(plaintextLength + segmentPlaintextOverhead, SEGMENT_LENGTH_SIZE, ciphertext, ciphertextOffset + segmentLengthOffset);
                 } else {
-                    System.arraycopy(INTERNAL_SEGMENT_HEADER, 0, ciphertext, ciphertextOffset + segmentLengthOffset, 4);
+                    System.arraycopy(INTERNAL_SEGMENT_HEADER, 0, ciphertext, ciphertextOffset + segmentLengthOffset, SEGMENT_LENGTH_SIZE);
                 }
 
                 return plaintextLength + segmentPlaintextOverhead;
@@ -436,16 +437,16 @@ public final class Floe {
                     if (ciphertextLength < segmentPlaintextOverhead) {
                         throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength);
                     }
-                    final byte[] encodedLength = new byte[4];
-                    i2be(ciphertextLength, 4, encodedLength, 0);
-                    if (!Arrays.equals(encodedLength, 0, 4, ciphertext, ciphertextOffset, ciphertextOffset + 4)) {
-                        throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength + " " + Base64.getEncoder().encodeToString(Arrays.copyOfRange(ciphertext, ciphertextOffset, ciphertextOffset  + 32)));
+                    final byte[] encodedLength = new byte[SEGMENT_LENGTH_SIZE];
+                    i2be(ciphertextLength, SEGMENT_LENGTH_SIZE, encodedLength, 0);
+                    if (!Arrays.equals(encodedLength, 0, SEGMENT_LENGTH_SIZE, ciphertext, ciphertextOffset, ciphertextOffset + SEGMENT_LENGTH_SIZE)) {
+                        throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength);
                     }
                 } else {
                     if (ciphertextLength != params.getEncryptedSegmentLength()) {
                         throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength);
                     }
-                    if (!Arrays.equals(INTERNAL_SEGMENT_HEADER, 0, 4, ciphertext, ciphertextOffset, ciphertextOffset + 4)) {
+                    if (!Arrays.equals(INTERNAL_SEGMENT_HEADER, 0, SEGMENT_LENGTH_SIZE, ciphertext, ciphertextOffset, ciphertextOffset + SEGMENT_LENGTH_SIZE)) {
                         throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength);
                     }
                 }
@@ -541,12 +542,12 @@ public final class Floe {
         header.put(iv);
 
         // HeaderTag = FLOE_KDF(key, iv, aad, “HEADER_TAG:”)
-        final byte[] headerTag = floe_kdf(floeKey, iv, aad, HEADER_TAG_PURPOSE, 32);
+        final byte[] headerTag = floe_kdf(floeKey, iv, aad, HEADER_TAG_PURPOSE, HEADER_TAG_SIZE);
         header.put(headerTag);
         if (header.hasRemaining()) {
             throw new IllegalStateException("Unexpected remaining bytes: " + header.remaining());
         }
-        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", 32)
+        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_LEN)
         final SecretKey messageKey = new SecretKeySpec(floe_kdf(floeKey, iv, aad, MESSAGE_KEY_PURPOSE, params.getHash().getLength()), "FLOE_MSG_KEY");
         return new RandomAccessEncryptor(messageKey, iv, aad, header.array());
     }
@@ -555,20 +556,20 @@ public final class Floe {
         assertValidKey(key, params.getAead());
         // EncodedParams = PARAM_ENCODE(params)
         ByteBuffer encodedParams = params.getEncoded();
-        // assert len(header) == FLOE_IV_LEN + len(EncodedParams) + 32
+        // assert len(header) == FLOE_IV_LEN + len(EncodedParams) + HEADER_TAG_SIZE
         if (ciphertextPrefix.length < params.getHeaderLen()) {
-            throw new IllegalArgumentException("Ciphertext prefix too short. Must be of length: " + params.getIvLength() + 4 + " was " + ciphertextPrefix.length);
+            throw new IllegalArgumentException("Ciphertext prefix too short. Must be of length: " + params.getIvLength() + SEGMENT_LENGTH_SIZE + " was " + ciphertextPrefix.length);
         }
         ByteBuffer header = ByteBuffer.wrap(ciphertextPrefix, 0, params.getHeaderLen());
-        // (HeaderParams, iv, HeaderTag) = SPLIT(header, len(EncodedParams), 32)
+        // (HeaderParams, iv, HeaderTag) = SPLIT(header, len(EncodedParams), HEADER_TAG_SIZE)
         final ByteBuffer headerParams = header.limit(encodedParams.remaining()).duplicate();
         header.limit(header.capacity());
         header.position(encodedParams.remaining());
-        header.limit(header.capacity() - 32);
+        header.limit(header.capacity() - HEADER_TAG_SIZE);
         final byte[] iv = new byte[params.getIvLength()];
         header.get(iv);
         header.limit(header.capacity());
-        final byte[] headerTag = new byte[32];
+        final byte[] headerTag = new byte[HEADER_TAG_SIZE];
         header.get(headerTag);
 
         // assert HeaderParams == EncodedParams
@@ -576,12 +577,12 @@ public final class Floe {
             throw new IllegalArgumentException("Invalid header parameters");
         }
         // ExpectedHeaderTag = FLOE_KDF(key, iv, aad, “HEADER_TAG:”)
-        final byte[] expectedHeaderTag = floe_kdf(key, iv, aad, HEADER_TAG_PURPOSE, 32);
+        final byte[] expectedHeaderTag = floe_kdf(key, iv, aad, HEADER_TAG_PURPOSE, HEADER_TAG_SIZE);
         // assert ExpectedHeaderTag == HeaderTag // Must be constant time
         if (!MessageDigest.isEqual(headerTag, expectedHeaderTag)) {
             throw new IllegalArgumentException("Invalid header tag");
         }
-        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", 32)
+        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_LEN)
         final SecretKey messageKey = new SecretKeySpec(floe_kdf(key, iv, aad, MESSAGE_KEY_PURPOSE, params.getHash().getLength()), "FLOE_MSG_KEY");
         return new RandomAccessDecryptor(messageKey, iv, aad);
     }

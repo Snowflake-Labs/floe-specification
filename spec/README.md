@@ -167,7 +167,7 @@ However, depending on the specific use-case, these APIs may be the correct level
 They are more challenging to use correctly because they no longer protect the developer from a number of mistakes:
 
 - They do not enforce that all required segments are encrypted.  
-- They do not enforce that **TODO-INSERT** is never called multiple times for a given position/terminal indicator
+- They do not enforce that `encryptSegment` is never called multiple times for a given position/terminal indicator
 - They do not prevent encryption of segments with higher positions than the terminal segment
 - If a decryptor does not already know the correct length of the ciphertext (i.e., maximum position) then it is difficult for them to distiguish truncation versus just trying to read past the end.
 - If an adversary can cause a decryptor to attempt decryption of a valid segment with the incorrect position/terminal indicator, then FLOE loses commitment properties.

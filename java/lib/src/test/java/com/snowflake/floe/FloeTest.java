@@ -216,6 +216,17 @@ public class FloeTest {
         assertArrayEquals(plaintext, decrypted);
         assertEquals(p, FloeParameterSpec.fromEncoded(ByteBuffer.wrap(ciphertext)));
 
+        // We also want to show that decryption fails
+        // We'll corrupt a byte in the second to last segment
+        final int plaintextSegmentOverhead = p.getEncryptedSegmentLength() - p.getPlaintextSegmentLen();
+        ciphertext[ciphertext.length - lastSegSize - plaintextSegmentOverhead - 1]++;
+        // Now, expect a failure
+        if (decRandomAccess) {
+            assertThrows(IllegalArgumentException.class, () -> decryptWithRandomAccess(instance.startDecryption(key, aad, ciphertext), ciphertext, lastSegSize));
+        } else {
+            assertThrows(IllegalArgumentException.class, () -> decryptSequential(instance.createDecryptor(key, aad, ciphertext), ciphertext, lastSegSize));
+        }
+
         if (OUTPUT_KATS) {
             final File ptFile = new File("src/test/resources/java_" + katName + "_pt.txt");
             final File ctFile = new File("src/test/resources/java_" + katName + "_ct.txt");
@@ -407,6 +418,7 @@ public class FloeTest {
 
     @ParameterizedTest
     @MethodSource("katTestParameters")
+    // Decrypt our Known Answer Tests
     public void testKat(final FloeParameterSpec spec, final String katName) throws Exception {
         byte[] key = new byte[spec.getAead().getKeyLength()];
 
@@ -417,6 +429,7 @@ public class FloeTest {
 
     @ParameterizedTest
     @MethodSource("katTestParameters")
+    // Decrypt our Known Answer Tests
     public void testKatRandomAccess(final FloeParameterSpec spec, final String katName) throws Exception {
         byte[] key = new byte[spec.getAead().getKeyLength()];
 

@@ -48,6 +48,7 @@ public class TestUtils {
         }
     }
 
+    // KAT here and elsewhere is a "Known Answer Test" also commonly called a "Test Vector"
     static String[] loadKatsFromFile(String katName) throws IOException{
         final String plaintextHex;
         try (InputStream is = TestUtils.class.getClassLoader().getResourceAsStream("kats/" + katName + "_pt.txt")) {
@@ -60,6 +61,7 @@ public class TestUtils {
         return new String[] {ciphertextHex, plaintextHex};
     }
 
+    // KAT here and elsewhere is a "Known Answer Test" also commonly called a "Test Vector"
     static void decryptKat(final FloeParameterSpec p, byte[] key, byte[] aad, String ciphertextHex, String plaintextHex) throws Exception {
         final byte[] ciphertext = Hex.decodeHex(ciphertextHex);
         final byte[] plaintext = Hex.decodeHex(plaintextHex);
