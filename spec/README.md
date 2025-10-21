@@ -1,12 +1,16 @@
 # FLOE Specification
 
-Fast Lightweight Online Encryption (FLOE) is an authenticated online encryption scheme that is nOAE2 secure as defined by [HRRV15](https://eprint.iacr.org/2015/189) and is inspired heavily by the work in that paper and others.
+Fast Lightweight Online Encryption (FLOE) is a secure random access authenticated encryption (raAE) scheme as defined in a soon to be published paper.
+All raAE schemes are also nOAE2 secure as defined by [HRRV15](https://eprint.iacr.org/2015/189).
+FLOE is inspired heavily by the work in HRRV15 and others.
 FLOE can be thought of as a family of algorithms, each specified by a set a parameters.
 (This is similar to how [HPKE](https://www.rfc-editor.org/rfc/rfc9180.html) is defined.)
 
-This specification defines six *public* functions: `startEncryption`, `encryptSegment`, `encryptLastSegment`, and their decryption equivalents.
+This specification defined four *public* functions for the random access case (raAE): `startEncryption`, `encyptSegment` and their decryption equivalents.
+For usecases that do not require random access, we strongly recommend that instead of exposing `encryptSegment` and `decryptSegment` that you expose the sequention/online equivalents of them:
+`encryptOnlineSegment`, `encryptLastSegment`, and their decryption equivalents.
+These four methods (along with the two `start` functions) support the nOAE2/online/sequential use case and are harder to misuse.
 An implementation may not choose to expose those methods directly to callers but instead implement its own API on top of the "official" FLOE functions.
-These six functions define a safe interface so implementations can build a more user-friendly API as needed.
 
 ## Terminology
 
