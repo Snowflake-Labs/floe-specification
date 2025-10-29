@@ -48,6 +48,7 @@ public class TestUtils {
         }
     }
 
+    // KAT here and elsewhere is a "Known Answer Test" also commonly called a "Test Vector"
     static String[] loadKatsFromFile(String katName) throws IOException{
         final String plaintextHex;
         try (InputStream is = TestUtils.class.getClassLoader().getResourceAsStream("kats/" + katName + "_pt.txt")) {
@@ -60,10 +61,11 @@ public class TestUtils {
         return new String[] {ciphertextHex, plaintextHex};
     }
 
+    // KAT here and elsewhere is a "Known Answer Test" also commonly called a "Test Vector"
     static void decryptKat(final FloeParameterSpec p, byte[] key, byte[] aad, String ciphertextHex, String plaintextHex) throws Exception {
         final byte[] ciphertext = Hex.decodeHex(ciphertextHex);
         final byte[] plaintext = Hex.decodeHex(plaintextHex);
-        Decryptor decryptor = Floe.getInstance(p).createDecryptor(new SecretKeySpec(key, p.getAead().getJceKeyAlg()), aad, ciphertext);
+        SequentialDecryptor decryptor = Floe.getInstance(p).createDecryptor(new SecretKeySpec(key, p.getAead().getJceKeyAlg()), aad, ciphertext);
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         for (int offset = p.getHeaderLen(); offset < ciphertext.length; offset += p.getEncryptedSegmentLength()) {
             byte[] segment;
@@ -76,6 +78,30 @@ public class TestUtils {
             }
         }
         assertTrue(decryptor.isDone());
+        assertArrayEquals(plaintext, baos.toByteArray());
+    }
+
+        static void decryptKatRandomAccess(final FloeParameterSpec p, byte[] key, byte[] aad, String ciphertextHex, String plaintextHex) throws Exception {
+        final byte[] ciphertext = Hex.decodeHex(ciphertextHex);
+        final byte[] plaintext = Hex.decodeHex(plaintextHex);
+        Floe.RandomAccessDecryptor decryptor = Floe.getInstance(p).startDecryption(new SecretKeySpec(key, p.getAead().getJceKeyAlg()), aad, ciphertext);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        long counter = 0;
+        byte[] segment = new byte[p.getPlaintextSegmentLen()];
+        for (int offset = p.getHeaderLen(); offset < ciphertext.length; offset += p.getEncryptedSegmentLength()) {
+            final int inputLength;
+            final boolean isFinal;
+            if (offset + p.getEncryptedSegmentLength() >= ciphertext.length) {
+                inputLength = ciphertext.length - offset;
+                isFinal = true;
+            } else {
+                inputLength = p.getEncryptedSegmentLength();
+                isFinal = false;
+            }
+            final int written = decryptor.decryptSegment(ciphertext, offset, inputLength, segment, 0, counter, isFinal);
+            counter++;
+            baos.write(segment, 0, written);
+        }
         assertArrayEquals(plaintext, baos.toByteArray());
     }
 }

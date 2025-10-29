@@ -22,7 +22,7 @@ import java.nio.ByteBuffer;
 import javax.crypto.SecretKey;
 
 public class FloeEncryptingInputStream extends InputStream implements FloeStream {
-    private final Encryptor floe;
+    private final SequentialEncryptor floe;
     private final InputStream in;
     private final ByteBuffer outBuffer;
     private final ByteBuffer inBuffer;

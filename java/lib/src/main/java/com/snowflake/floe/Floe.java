@@ -35,15 +35,18 @@ import javax.crypto.spec.SecretKeySpec;
 public final class Floe {
     public static final FloeParameterSpec GCM256_IV256_4K = new FloeParameterSpec(FloeAead.AES_GCM_256, FloeHash.SHA384, 4 * 1024, 32);
     public static final FloeParameterSpec GCM256_IV256_1M = new FloeParameterSpec(FloeAead.AES_GCM_256, FloeHash.SHA384, 1024 * 1024, 32);
-    private static final int INTERNAL_SEGMENT_HEADER = -1;
+    private static final byte[] INTERNAL_SEGMENT_HEADER = {(byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF};
 
     private static final byte[] DEK_PURPOSE = "DEK:".getBytes(StandardCharsets.UTF_8);
     private static final byte[] HEADER_TAG_PURPOSE = "HEADER_TAG:".getBytes(StandardCharsets.UTF_8);
     private static final byte[] MESSAGE_KEY_PURPOSE = "MESSAGE_KEY:".getBytes(StandardCharsets.UTF_8);
     private static final byte[] EMPTY_ARRAY = new byte[0];
+    private static final int HEADER_TAG_SIZE = 32;
+    private static final int SEGMENT_LENGTH_SIZE = 4;
 
     private final ThreadLocal<SecureRandom> random;
     private final FloeParameterSpec params;
+    private final int segmentPlaintextOverhead;
 
     public static Floe getInstance(final FloeParameterSpec params) {
         return new Floe(params, null);
@@ -55,6 +58,7 @@ public final class Floe {
 
     private Floe(final FloeParameterSpec params, SecureRandom rndOverride) {
         this.params = params;
+        segmentPlaintextOverhead = SEGMENT_LENGTH_SIZE + params.getAead().getNonceLength() + params.getAead().getTagLength();
         if (rndOverride == null) {
             // By default we use thread local secure random for better performance, not for correctness
             random = ThreadLocal.withInitial(SecureRandom::new);
@@ -86,6 +90,13 @@ public final class Floe {
         }
     }
 
+    protected byte[] buildSegmentAad(final long segmentNumber, boolean last) {
+        final byte[] aad = new byte[9];
+        i2be(segmentNumber, 8, aad, 0);
+        aad[aad.length - 1] = (byte) (last ? 1 : 0);
+        return aad;
+    }
+
     public FloeEncryptingInputStream createEncryptor(final SecretKey key, final byte[] aad, InputStream inputStream, boolean emitHeader) {
         return new FloeEncryptingInputStream(inputStream, key, aad, params, emitHeader);
     }
@@ -94,25 +105,8 @@ public final class Floe {
         return new FloeEncryptingOutputStream(outputStream, key, aad, params, emitHeader);
     }
 
-    public Encryptor createEncryptor(final SecretKey key, final byte[] aad) {
-        assertValidKey(key, params.getAead());
-        // iv = RND(FLOE_IV_LEN)
-        final byte[] iv = getRandomBytes(params.getIvLength());
-        // HeaderPrefix = PARAM_ENCODE(params) || iv
-        final ByteBuffer encodedParams = params.getEncoded();
-        final ByteBuffer header = ByteBuffer.allocate(params.getHeaderLen());
-        header.put(encodedParams);
-        header.put(iv);
-
-        // HeaderTag = FLOE_KDF(key, iv, aad, “HEADER_TAG:”)
-        final byte[] headerTag = floe_kdf(key, iv, aad, HEADER_TAG_PURPOSE, 32);
-        header.put(headerTag);
-        if (header.hasRemaining()) {
-            throw new IllegalStateException("Unexpected remaining bytes: " + header.remaining());
-        }
-        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", 32)
-        final SecretKey messageKey = new SecretKeySpec(floe_kdf(key, iv, aad, MESSAGE_KEY_PURPOSE, params.getHash().getLength()), "FLOE_MSG_KEY");
-        return new EncryptorImpl(header.array(), iv, aad, messageKey);
+    public SequentialEncryptor createEncryptor(final SecretKey key, final byte[] aad) {
+         return new EncryptorImpl(startEncryption(key, aad));
     }
 
     public FloeDecryptingInputStream createDecryptor(final SecretKey key, byte[] aad, InputStream inputStream) {
@@ -131,39 +125,8 @@ public final class Floe {
         return new FloeDecryptingOutputStream(outputStream, key, aad, params, separateHeader);
     }
 
-    public Decryptor createDecryptor(final SecretKey key, byte[] aad, byte[] ciphertextPrefix) {
-        assertValidKey(key, params.getAead());
-        // EncodedParams = PARAM_ENCODE(params)
-        ByteBuffer encodedParams = params.getEncoded();
-        // assert len(header) == FLOE_IV_LEN + len(EncodedParams) + 32
-        if (ciphertextPrefix.length < params.getHeaderLen()) {
-            throw new IllegalArgumentException("Ciphertext prefix too short. Must be of length: " + params.getIvLength() + 4 + " was " + ciphertextPrefix.length);
-        }
-        ByteBuffer header = ByteBuffer.wrap(ciphertextPrefix, 0, params.getHeaderLen());
-        // (HeaderParams, iv, HeaderTag) = SPLIT(header, len(EncodedParams), 32)
-        final ByteBuffer headerParams = header.limit(encodedParams.remaining()).duplicate();
-        header.limit(header.capacity());
-        header.position(encodedParams.remaining());
-        header.limit(header.capacity() - 32);
-        final byte[] iv = new byte[params.getIvLength()];
-        header.get(iv);
-        header.limit(header.capacity());
-        final byte[] headerTag = new byte[32];
-        header.get(headerTag);
-
-        // assert HeaderParams == EncodedParams
-        if (!encodedParams.equals(headerParams)) {
-            throw new IllegalArgumentException("Invalid header parameters");
-        }
-        // ExpectedHeaderTag = FLOE_KDF(key, iv, aad, “HEADER_TAG:”)
-        final byte[] expectedHeaderTag = floe_kdf(key, iv, aad, HEADER_TAG_PURPOSE, 32);
-        // assert ExpectedHeaderTag == HeaderTag // Must be constant time
-        if (!MessageDigest.isEqual(headerTag, expectedHeaderTag)) {
-            throw new IllegalArgumentException("Invalid header tag");
-        }
-        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", 32)
-        final SecretKey messageKey = new SecretKeySpec(floe_kdf(key, iv, aad, MESSAGE_KEY_PURPOSE, params.getHash().getLength()), "FLOE_MSG_KEY");
-        return new DecryptorImpl(iv, aad, messageKey);
+    public SequentialDecryptor createDecryptor(final SecretKey key, byte[] aad, byte[] ciphertextPrefix) {
+        return new DecryptorImpl(startDecryption(key, aad, ciphertextPrefix));
     }
  
     // VisibleForTesting
@@ -253,35 +216,22 @@ public final class Floe {
         return new SecretKeySpec(rawKey, params.getAead().getJceKeyAlg());
     }
 
-    private abstract class AbstractImpl implements FloeSegmentProcessor {
-        private final byte[] floeIv;
-        private final byte[] aad;
-        protected final SecretKey key;
-        private final Cipher cipher;
-        private long lastMaskedCounter = -1;
-        private SecretKey cachedKey = null;
+    private abstract class AbstractOnlineImpl {
+        protected final FloeRandomAccess randImpl;
         protected long counter = 0;
         protected boolean closed = false;
 
-        private AbstractImpl(final byte[] iv, final byte[] aad, final SecretKey key) {
-            this.floeIv = iv;
-            this.aad = cloneOrEmpty(aad);
-            this.key = key;
-            try {
-                this.cipher = Cipher.getInstance(params.getAead().getJceName());
-            } catch (GeneralSecurityException ex) {
-                throw new IllegalStateException("Unexpected exception", ex);
-            }
+        private AbstractOnlineImpl(final FloeRandomAccess randImpl) {
+            this.randImpl = randImpl;
         }
 
-        @Override
         public FloeParameterSpec getParameterSpec() {
             return params;
         }
 
         protected void assertNotClosed() {
             if (closed) {
-                throw new IllegalStateException("Encryptor is closed");
+                throw new IllegalStateException("SequentialEncryptor is closed");
             }
         }
 
@@ -290,57 +240,17 @@ public final class Floe {
                 throw new IllegalStateException("Too many segments");
             }
         }
-        protected byte[] buildSegmentAad(boolean last) {
-            final byte[] aad = new byte[9];
-            i2be(counter, 8, aad, 0);
-            aad[aad.length - 1] = (byte) (last ? 1 : 0);
-            return aad;
-        }
 
-        private SecretKey getCurrentKey() {
-            return deriveKey(key, floeIv, aad, counter);
-        }
-    
-        protected Cipher prepCipher(final int cipherMode, final AlgorithmParameterSpec paramSpec, final boolean isLast) {
-            try {
-                final long maskedCounter = counter & params.getOverrideRotationMask();
-                final SecretKey key;
-                final boolean newKey = maskedCounter != lastMaskedCounter;
-                if (newKey) {
-                    key = getCurrentKey();
-                    cachedKey = key;
-                    lastMaskedCounter = maskedCounter;
-                } else {
-                    key = cachedKey;
-                }
-
-                if (paramSpec != null) {
-                    cipher.init(cipherMode, key, paramSpec);
-                } else {
-                    cipher.init(cipherMode, key);
-                }
-                
-                final byte[] aad = buildSegmentAad(isLast);
-                cipher.updateAAD(aad);
-                return cipher;
-            } catch (GeneralSecurityException ex) {
-                throw new IllegalStateException("Unexpected exception", ex);
-            }
-
-        }
-
-        @Override
         public boolean isDone() {
             return closed;
         }
     }
 
-    private final class EncryptorImpl extends AbstractImpl implements Encryptor {
-        private final byte[] header;
-
-        private EncryptorImpl(final byte[] header, final byte[] iv, final byte[] aad, final SecretKey key) {
-            super(iv, aad, key);
-            this.header = header;
+    private final class EncryptorImpl extends AbstractOnlineImpl implements SequentialEncryptor {
+        final byte[] header;
+        private EncryptorImpl(final RandomAccessEncryptor randImpl) {
+            super(randImpl);
+            header = randImpl.header;
         }
 
         @Override
@@ -361,111 +271,38 @@ public final class Floe {
         @Override
         public int processSegment(byte[] plaintext, int inputOffset, byte[] ciphertext, int outputOffset) {
             assertNotClosed();
-            // assert len(plaintext) == ENC_SEG_LEN - AEAD_IV_LEN - AEAD_TAG_LEN - 4
-            if (plaintext.length - inputOffset < params.getPlaintextSegmentLen()) {
-                throw new ArrayIndexOutOfBoundsException("Insufficient input size: " + plaintext.length);
-            }
-            if (ciphertext.length - outputOffset < params.getEncryptedSegmentLength()) {
-                throw new ArrayIndexOutOfBoundsException("Insufficient output size: " + ciphertext.length);
-            }
-            // assert State.Counter != 2^32-1 # Prevent overflow
             assertNonTerminalNoOverflow();
-            try {
-                final byte[] iv = getRandomBytes(params.getAead().getNonceLength());
-                GCMParameterSpec spec = new GCMParameterSpec(128, iv);
-                final Cipher cipher = prepCipher(Cipher.ENCRYPT_MODE, spec, false);
-                final ByteBuffer result = ByteBuffer.wrap(ciphertext, outputOffset, params.getEncryptedSegmentLength());
-                result.putInt(INTERNAL_SEGMENT_HEADER);
-                result.position(result.position() + params.getAead().getNonceLength());
-                final ByteBuffer plaintextBuf = ByteBuffer.wrap(plaintext, inputOffset, params.getPlaintextSegmentLen());
-                
-                // (aead_ciphertext, tag) = AEAD_ENC(State.AeadKey, aead_iv, plaintext, aead_aad)
-                final int ctLen = cipher.doFinal(plaintextBuf, result);
-                if (ctLen != plaintext.length + params.getAead().getTagLength()) {
-                    throw new IllegalStateException("Unexpected output length: " + ctLen);
-                }
-                if (plaintextBuf.hasRemaining()) {
-                    throw new IllegalStateException("Unexpected remaining bytes: " + plaintextBuf.remaining());
-                }
-                if (result.hasRemaining()) {
-                    throw new IllegalStateException("Unexpected remaining bytes: " + result.remaining());
-                }
-                
-                // aead_iv = RND(AEAD_IV_LEN)
-                // final byte[] iv = cipher.getIV();
-                if (iv.length != params.getAead().getNonceLength()) {
-                    throw new IllegalStateException("Unexpected IV length: " + iv.length);
-                }
-
-                // EncryptedSegment = 0xFFFFFFFF || aead_iv || aead_ciphertext || tag
-                result.position(0);
-                result.putInt(-1);
-                result.put(iv);
-                // State.Counter++
-                counter++;
-                return params.getEncryptedSegmentLength();
-            } catch (GeneralSecurityException ex) {
-                throw new IllegalStateException("Unexpected exception", ex);
-            }
+            final int result = randImpl.encryptSegment(
+                plaintext,
+                inputOffset,
+                params.getPlaintextSegmentLen(),
+                ciphertext,
+                outputOffset,
+                counter,
+                false);
+            counter++;
+            return result;
         }
 
         @Override
         public int processLastSegment(byte[] plaintext, int inputOffset, int inputLength, byte[] output, int outputOffset) {
             assertNotClosed();
-            // assert len(plaintext) >= 0
-            //   NOP in Java
-            // assert len(plaintext) <= ENC_SEG_LEN - AEAD_IV_LEN - AEAD_TAG_LEN - 4
-            if (inputLength > params.getPlaintextSegmentLen()) {
-                throw new IllegalArgumentException("Invalid segment length: " + plaintext.length);
-            }
-
-            try {
-                final byte[] iv = getRandomBytes(params.getAead().getNonceLength());
-                GCMParameterSpec spec = new GCMParameterSpec(128, iv);
-                final Cipher cipher = prepCipher(Cipher.ENCRYPT_MODE, spec, true);
-                // FinalSegementLength = len(plaintext) + 4 + AEAD_IV_LEN + AEAD_TAG_LEN
-                final int finalSegmentLength = inputLength + 4 + params.getAead().getNonceLength() + params.getAead().getTagLength();
-                final ByteBuffer result = ByteBuffer.wrap(output, outputOffset, finalSegmentLength);
-                result.putInt(finalSegmentLength);
-                result.position(result.position() + params.getAead().getNonceLength());
-                final ByteBuffer plaintextBuf = ByteBuffer.wrap(plaintext, inputOffset, inputLength);
-                // (aead_ciphertext, tag) = AEAD_ENC(State.AeadKey, aead_iv, plaintext, aead_aad)	
-                final int ctLen = cipher.doFinal(plaintextBuf, result);
-                if (ctLen != inputLength + params.getAead().getTagLength()) {
-                    throw new IllegalStateException("Unexpected output length: " + ctLen);
-                }
-                if (plaintextBuf.hasRemaining()) {
-                    throw new IllegalStateException("Unexpected remaining bytes: " + plaintextBuf.remaining());
-                }
-                if (result.hasRemaining()) {
-                    throw new IllegalStateException("Unexpected remaining bytes: " + result.remaining());
-                }
-                // aead_iv = RND(AEAD_IV_LEN)
-                // final byte[] iv = cipher.getIV();
-                if (iv.length != params.getAead().getNonceLength()) {
-                    throw new IllegalStateException("Unexpected IV length: " + iv.length);
-                }
-                // EncryptedSegment = I2BE(FinalSegementLength, 4) || aead_iv || aead_ciphertext || tag
-                result.position(0);
-                result.putInt(finalSegmentLength);
-                result.put(iv);
-
-                closed = true;
-                return finalSegmentLength;
-            } catch (GeneralSecurityException ex) {
-                throw new IllegalStateException("Unexpected exception", ex);
-            }
+            final int result = randImpl.encryptSegment(
+                plaintext,
+                inputOffset,
+                inputLength,
+                output,
+                outputOffset,
+                counter,
+                true);
+            closed = true;
+            return result;
         }
     }
 
-    final class DecryptorImpl extends AbstractImpl implements Decryptor {
-        private DecryptorImpl(final byte[] iv, final byte[] aad, final SecretKey key) {
-            super(iv, aad, key);
-        }
-
-        @Override
-        public FloeParameterSpec getParameterSpec() {
-            return params;
+    final class DecryptorImpl extends AbstractOnlineImpl implements SequentialDecryptor {
+        private DecryptorImpl(final RandomAccessDecryptor randImpl) {
+            super(randImpl);
         }
 
         @Override
@@ -477,87 +314,285 @@ public final class Floe {
         public int outputSegmentSize() {
             return params.getPlaintextSegmentLen();
         }
-        
+
         @Override
         public int processSegment(byte[] ciphertext, int inputOffset, byte[] plaintext, int outputOffset) {
             assertNotClosed();
-            // assert len(EncryptedSegment) == ENC_SEG_LEN
-            if (ciphertext.length - inputOffset < params.getEncryptedSegmentLength()) {
-                throw new ArrayIndexOutOfBoundsException("Insufficient input size: " + ciphertext.length);
-            }
-            if (plaintext.length - outputOffset < params.getPlaintextSegmentLen()) {
-                throw new ArrayIndexOutOfBoundsException("Insufficient output size: " + plaintext.length);
-            }
-            final ByteBuffer ciphertextBuf = ByteBuffer.wrap(ciphertext, inputOffset, params.getEncryptedSegmentLength());
-            final int segmentLength = ciphertextBuf.getInt();
-            // assert BE2I(EncryptedSegment[:4]) == 0xFFFFFFFF
-            if (segmentLength != INTERNAL_SEGMENT_HEADER) {
-                throw new IllegalArgumentException("Invalid segment length: " + segmentLength);
-            }
             // assert State.Counter != 2^32-1 # Prevent overflow
             assertNonTerminalNoOverflow();
-            try {
-                // (aead_iv, aead_ciphertext, tag) = SPLIT(EncryptedSegment[4:], AEAD_IV_LEN, AEAD_TAG_LEN)
-                final int ivOffset = inputOffset + 4;
-                final int ivLen = params.getAead().getNonceLength();
-                final int aeadCiphertextOffset = ivOffset + ivLen;
-                final int aeadCiphertextLen = params.getEncryptedSegmentLength() - ivLen - 4;
+            final int result = randImpl.decryptSegment(
+                ciphertext,
+                inputOffset,
+                params.getEncryptedSegmentLength(),
+                plaintext,
+                outputOffset,
+                counter,
+                false);
+            counter++;
+            return result;
+        }
 
-                final AlgorithmParameterSpec paramSpec = params.getAead().buildSpec(ciphertext, ivOffset);
-                final Cipher cipher = prepCipher(Cipher.DECRYPT_MODE, paramSpec, false);
-                // Plaintext = AEAD_DEC(State.AeadKey, aead_iv, aead_ciphertext, aead_aad)
-                // assert Plaintext != FAIL
-                cipher.doFinal(ciphertext, aeadCiphertextOffset, aeadCiphertextLen, plaintext, outputOffset);
-                // State.Counter++
-                counter++;
-                // return Plaintext
-                return params.getPlaintextSegmentLen();
-            } catch (final AEADBadTagException ex) {
-                throw new IllegalArgumentException("Bad tag", ex);
+        @Override
+        public int processLastSegment(byte[] ciphertext, int inputOffset, int inputLength, byte[] plaintext, int outputOffset) {
+            assertNotClosed();
+            final int result = randImpl.decryptSegment(
+                ciphertext,
+                inputOffset,
+                inputLength,
+                plaintext,
+                outputOffset,
+                counter,
+                true);
+            closed = true;
+            return result;
+        }
+    }
+
+    private abstract class FloeRandomAccess implements FloeInstance {
+        private final SecretKey messageKey;
+        private final byte[] floeIv;
+        private final byte[] floeAad;
+        private final Cipher cipher;
+        private final int segmentLengthOffset = 0;
+        private final int segmentIvOffset = segmentLengthOffset + SEGMENT_LENGTH_SIZE;
+        private final int segmentCiphertextOffset = segmentIvOffset + params.getAead().getNonceLength();
+
+        private FloeRandomAccess(final SecretKey messageKey, final byte[] floeIv, final byte[] floeAad) {
+            this.messageKey = messageKey;
+            this.floeIv = cloneOrEmpty(floeIv);
+            this.floeAad = cloneOrEmpty(floeAad);
+            try {
+                cipher = Cipher.getInstance(params.getAead().getJceName());
             } catch (final GeneralSecurityException ex) {
                 throw new IllegalStateException("Unexpected exception", ex);
             }
         }
 
         @Override
-        public int processLastSegment(byte[] ciphertext, int inputOffset, int inputLength, byte[] plaintext, int outputOffset) {
-            if (closed) {
-                throw new IllegalStateException("Encryptor is closed");
-            }
-            // assert len(EncryptedSegment) >= AEAD_IV_LEN + AEAD_TAG_LEN + 4
-            if (inputLength < params.getAead().getNonceLength() + params.getAead().getTagLength() + 4) {
-                throw new IllegalArgumentException("Invalid segment length: " + inputLength);
-            }
-            // assert len(EncryptedSegment) <= ENC_SEG_LEN
-            if (inputLength > params.getEncryptedSegmentLength()) {
-                throw new IllegalArgumentException("Invalid segment length: " + inputLength);
-            }
-            // assert BE2I(EncryptedSegment[:4]) == len(EncryptedSegment)
-            final ByteBuffer ciphertextBuf = ByteBuffer.wrap(ciphertext, inputOffset, inputLength);
-            final int segmentLength = ciphertextBuf.getInt();
-            if (segmentLength != inputLength) {
-                throw new IllegalArgumentException("Segment length " + segmentLength + " does not match provided " + inputLength);
-            }
+        public FloeParameterSpec getParameterSpec() {
+            return params;
+        }
 
-            // (aead_iv, aead_ciphertext, tag) = SPLIT(EncryptedSegment[:4], AEAD_IV_LEN, AEAD_TAG_LEN)
-            final int ivOffset = inputOffset + 4;
-            final int ivLen = params.getAead().getNonceLength();
-            final int aeadCiphertextOffset = ivOffset + ivLen;
-            final int aeadCiphertextLen = inputLength - ivLen - 4;
+        int encryptSegment(
+                final byte[] plaintext,
+                final int plaintextOffset,
+                final int plaintextLength,
+                final byte[] ciphertext,
+                final int ciphertextOffset,
+                final long segmentNumber,
+                final boolean isFinal
+            ) {
             try {
-                final AlgorithmParameterSpec paramSpec = params.getAead().buildSpec(ciphertext, ivOffset);
-                final Cipher cipher = prepCipher(Cipher.DECRYPT_MODE, paramSpec, true);
-                // Plaintext = AEAD_DEC(State.AeadKey, aead_iv, aead_ciphertext, aead_aad)
-                // assert Plaintext != FAIL
-                int result = cipher.doFinal(ciphertext, aeadCiphertextOffset, aeadCiphertextLen, plaintext, outputOffset);
-                closed = true;
-                // return Plaintext
-                return result;
+                assertOffsets(plaintext, plaintextOffset, plaintextLength);
+                assertOffsets(ciphertext, ciphertextOffset, plaintextLength + segmentPlaintextOverhead);
+                if (isFinal) {
+                    if (plaintextLength > params.getPlaintextSegmentLen()) {
+                        throw new IllegalArgumentException("Invalid segment length: " + plaintextLength);
+                    }
+                } else {
+                    if (plaintextLength != params.getPlaintextSegmentLen()) {
+                        throw new IllegalArgumentException("Invalid segment length: " + plaintextLength);
+                    }
+                }
+
+                // This would be worth caching
+                final SecretKey aeadKey = deriveKey(messageKey, floeIv, floeAad, segmentNumber);
+                final byte[] aeadIv = getRandomBytes(params.getAead().getNonceLength());
+                final byte[] aeadAad = buildSegmentAad(segmentNumber, isFinal);
+
+                cipher.init(Cipher.ENCRYPT_MODE, aeadKey, new GCMParameterSpec(params.getAead().getTagLength() * 8, aeadIv));
+                cipher.updateAAD(aeadAad);
+                cipher.doFinal(plaintext, plaintextOffset, plaintextLength, ciphertext, ciphertextOffset + segmentCiphertextOffset);
+
+                System.arraycopy(aeadIv, 0, ciphertext, ciphertextOffset + segmentIvOffset, aeadIv.length);
+
+                if (isFinal) {
+                    i2be(plaintextLength + segmentPlaintextOverhead, SEGMENT_LENGTH_SIZE, ciphertext, ciphertextOffset + segmentLengthOffset);
+                } else {
+                    System.arraycopy(INTERNAL_SEGMENT_HEADER, 0, ciphertext, ciphertextOffset + segmentLengthOffset, SEGMENT_LENGTH_SIZE);
+                }
+
+                return plaintextLength + segmentPlaintextOverhead;
+            } catch (final GeneralSecurityException ex) {
+                throw new IllegalStateException("Unexpected exception", ex);
+            }
+        }
+
+        int decryptSegment(
+            final byte[] ciphertext,
+            final int ciphertextOffset,
+            final int ciphertextLength,
+            final byte[] plaintext,
+            final int plaintextOffset,
+            final long segmentNumber,
+            final boolean isFinal
+        ) {
+            try {
+                assertOffsets(ciphertext, ciphertextOffset, ciphertextLength);
+                assertOffsets(plaintext, plaintextOffset, ciphertextLength - segmentPlaintextOverhead);
+                if (isFinal) {
+                    if (ciphertextLength > params.getEncryptedSegmentLength()) {
+                        throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength);
+                    }
+                    if (ciphertextLength < segmentPlaintextOverhead) {
+                        throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength);
+                    }
+                    final byte[] encodedLength = new byte[SEGMENT_LENGTH_SIZE];
+                    i2be(ciphertextLength, SEGMENT_LENGTH_SIZE, encodedLength, 0);
+                    if (!Arrays.equals(encodedLength, 0, SEGMENT_LENGTH_SIZE, ciphertext, ciphertextOffset, ciphertextOffset + SEGMENT_LENGTH_SIZE)) {
+                        throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength);
+                    }
+                } else {
+                    if (ciphertextLength != params.getEncryptedSegmentLength()) {
+                        throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength);
+                    }
+                    if (!Arrays.equals(INTERNAL_SEGMENT_HEADER, 0, SEGMENT_LENGTH_SIZE, ciphertext, ciphertextOffset, ciphertextOffset + SEGMENT_LENGTH_SIZE)) {
+                        throw new IllegalArgumentException("Invalid segment length: " + ciphertextLength);
+                    }
+                }
+                // This would be worth caching
+                final SecretKey aeadKey = deriveKey(messageKey, floeIv, floeAad, segmentNumber);
+                final GCMParameterSpec spec = new GCMParameterSpec(params.getAead().getTagLength() * 8,
+                    ciphertext,
+                    ciphertextOffset + segmentIvOffset,
+                    params.getAead().getNonceLength());
+                final byte[] aeadAad = buildSegmentAad(segmentNumber, isFinal);
+                cipher.init(Cipher.DECRYPT_MODE, aeadKey, spec);
+                cipher.updateAAD(aeadAad);
+                return cipher.doFinal(ciphertext, ciphertextOffset + segmentCiphertextOffset, ciphertextLength - segmentCiphertextOffset, plaintext, plaintextOffset);
             } catch (final AEADBadTagException ex) {
                 throw new IllegalArgumentException("Bad tag", ex);
             } catch (final GeneralSecurityException ex) {
                 throw new IllegalStateException("Unexpected exception", ex);
+            } catch (final RuntimeException ex) {
+                throw ex;
             }
+        }
+    }
+
+    public class RandomAccessEncryptor extends FloeRandomAccess {
+        private final byte[] header;
+
+        private RandomAccessEncryptor(final SecretKey messageKey, final byte[] floeIv, final byte[] floeAad, final byte[] header) {
+            super(messageKey, floeIv, floeAad);
+            this.header = header;
+        }
+
+        public int encryptSegment(
+                final byte[] plaintext,
+                final int plaintextOffset,
+                final int plaintextLength,
+                final byte[] ciphertext,
+                final int ciphertextOffset,
+                final long segmentNumber,
+                final boolean isFinal) {
+            return super.encryptSegment(plaintext, plaintextOffset, plaintextLength, ciphertext, ciphertextOffset, segmentNumber, isFinal);
+        }
+
+        public byte[] getHeader() {
+            return header.clone();
+        }
+
+        @Override
+        public int inputSegmentSize() {
+            return getParameterSpec().getPlaintextSegmentLen();
+        }
+
+        @Override
+        public int outputSegmentSize() {
+            return getParameterSpec().getEncryptedSegmentLength();
+        }
+    }
+
+    public class RandomAccessDecryptor extends FloeRandomAccess {
+        private RandomAccessDecryptor(final SecretKey messageKey, final byte[] floeIv, final byte[] floeAad) {
+            super(messageKey, floeIv, floeAad);
+        }
+
+        public int decryptSegment(
+            final byte[] ciphertext,
+            final int ciphertextOffset,
+            final int ciphertextLength,
+            final byte[] plaintext,
+            final int plaintextOffset,
+            final long segmentNumber,
+            final boolean isFinal) {
+            return super.decryptSegment(ciphertext, ciphertextOffset, ciphertextLength, plaintext, plaintextOffset, segmentNumber, isFinal);
+        }
+
+        @Override
+        public int inputSegmentSize() {
+            return getParameterSpec().getEncryptedSegmentLength();
+        }
+
+        @Override
+        public int outputSegmentSize() {
+            return getParameterSpec().getPlaintextSegmentLen();
+        }
+    }
+
+    public RandomAccessEncryptor startEncryption(final SecretKey floeKey, final byte[] aad) {
+        assertValidKey(floeKey, params.getAead());
+        // iv = RND(FLOE_IV_LEN)
+        final byte[] iv = getRandomBytes(params.getIvLength());
+        // HeaderPrefix = PARAM_ENCODE(params) || iv
+        final ByteBuffer encodedParams = params.getEncoded();
+        final ByteBuffer header = ByteBuffer.allocate(params.getHeaderLen());
+        header.put(encodedParams);
+        header.put(iv);
+
+        // HeaderTag = FLOE_KDF(key, iv, aad, “HEADER_TAG:”)
+        final byte[] headerTag = floe_kdf(floeKey, iv, aad, HEADER_TAG_PURPOSE, HEADER_TAG_SIZE);
+        header.put(headerTag);
+        if (header.hasRemaining()) {
+            throw new IllegalStateException("Unexpected remaining bytes: " + header.remaining());
+        }
+        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_LEN)
+        final SecretKey messageKey = new SecretKeySpec(floe_kdf(floeKey, iv, aad, MESSAGE_KEY_PURPOSE, params.getHash().getLength()), "FLOE_MSG_KEY");
+        return new RandomAccessEncryptor(messageKey, iv, aad, header.array());
+    }
+
+    public RandomAccessDecryptor startDecryption(final SecretKey key, byte[] aad, byte[] ciphertextPrefix) {
+        assertValidKey(key, params.getAead());
+        // EncodedParams = PARAM_ENCODE(params)
+        ByteBuffer encodedParams = params.getEncoded();
+        // assert len(header) == FLOE_IV_LEN + len(EncodedParams) + HEADER_TAG_SIZE
+        if (ciphertextPrefix.length < params.getHeaderLen()) {
+            throw new IllegalArgumentException("Ciphertext prefix too short. Must be of length: " + params.getIvLength() + SEGMENT_LENGTH_SIZE + " was " + ciphertextPrefix.length);
+        }
+        ByteBuffer header = ByteBuffer.wrap(ciphertextPrefix, 0, params.getHeaderLen());
+        // (HeaderParams, iv, HeaderTag) = SPLIT(header, len(EncodedParams), HEADER_TAG_SIZE)
+        final ByteBuffer headerParams = header.limit(encodedParams.remaining()).duplicate();
+        header.limit(header.capacity());
+        header.position(encodedParams.remaining());
+        header.limit(header.capacity() - HEADER_TAG_SIZE);
+        final byte[] iv = new byte[params.getIvLength()];
+        header.get(iv);
+        header.limit(header.capacity());
+        final byte[] headerTag = new byte[HEADER_TAG_SIZE];
+        header.get(headerTag);
+
+        // assert HeaderParams == EncodedParams
+        if (!encodedParams.equals(headerParams)) {
+            throw new IllegalArgumentException("Invalid header parameters");
+        }
+        // ExpectedHeaderTag = FLOE_KDF(key, iv, aad, “HEADER_TAG:”)
+        final byte[] expectedHeaderTag = floe_kdf(key, iv, aad, HEADER_TAG_PURPOSE, HEADER_TAG_SIZE);
+        // assert ExpectedHeaderTag == HeaderTag // Must be constant time
+        if (!MessageDigest.isEqual(headerTag, expectedHeaderTag)) {
+            throw new IllegalArgumentException("Invalid header tag");
+        }
+        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_LEN)
+        final SecretKey messageKey = new SecretKeySpec(floe_kdf(key, iv, aad, MESSAGE_KEY_PURPOSE, params.getHash().getLength()), "FLOE_MSG_KEY");
+        return new RandomAccessDecryptor(messageKey, iv, aad);
+    }
+
+    private static void assertOffsets(final byte[] array, final int offset, final int length) {
+        if (offset < 0 || length < 0) {
+            throw new ArrayIndexOutOfBoundsException();
+        }
+        if ((long) offset + (long) length > array.length) {
+            throw new ArrayIndexOutOfBoundsException(String.format("%d + %d ?> %d", offset, length, array.length));
         }
     }
 }

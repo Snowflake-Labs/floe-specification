@@ -29,7 +29,7 @@ public class FloeDecryptingInputStream extends InputStream implements FloeStream
     private final ByteBuffer headerBuffer;
     private final ByteBuffer ctBuffer;
     private final ByteBuffer ptBuffer;
-    private Decryptor floe;
+    private SequentialDecryptor floe;
     private boolean closed = false;
     private boolean done;
     private boolean truncated;

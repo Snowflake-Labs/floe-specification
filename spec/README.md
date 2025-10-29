@@ -1,12 +1,16 @@
 # FLOE Specification
 
-Fast Lightweight Online Encryption (FLOE) is an authenticated online encryption scheme that is nOAE2 secure as defined by [HRRV15](https://eprint.iacr.org/2015/189) and is inspired heavily by the work in that paper and others.
+Fast Lightweight Online Encryption (FLOE) is a secure random access authenticated encryption (raAE) scheme as defined in a soon to be published paper.
+All secure (ra-ROR) raAE schemes are also nOAE2 secure as defined by [HRRV15](https://eprint.iacr.org/2015/189).
+FLOE is inspired heavily by the work in HRRV15 and others.
 FLOE can be thought of as a family of algorithms, each specified by a set a parameters.
 (This is similar to how [HPKE](https://www.rfc-editor.org/rfc/rfc9180.html) is defined.)
 
-This specification defines six *public* functions: `startEncryption`, `encryptSegment`, `encryptLastSegment`, and their decryption equivalents.
-An implementation may not choose to expose those methods directly to callers but instead implement its own API on top of the "official" FLOE functions.
-These six functions define a safe interface so implementations can build a more user-friendly API as needed.
+This specification defines four *public* functions for the random access case (raAE): `startEncryption`, `encryptSegment` and their decryption equivalents.
+For usecases that do not require random access, we strongly recommend that instead of exposing `encryptSegment` and `decryptSegment` that you expose the sequention/online equivalents of them:
+`encryptOnlineSegment`, `encryptLastSegment`, and their decryption equivalents.
+These four methods (along with the two `start` functions) support the online/sequential use case and are harder to misuse.
+An implementation may choose not to expose those methods directly to callers but instead implement its own API on top of the "official" FLOE functions.
 
 ## Terminology
 
@@ -61,13 +65,13 @@ These parameters are all defined implicitly by selection of one of the main para
   The maximum number of segments in a FLOE ciphertext which uses the selected AEAD.
   Implementations may place lower limits on what they are willing to produce or accept.
 
-| `KDF` | `KDF_ID` | `KDF_LEN` |
+| `KDF` | `KDF_ID` | `KDF_KEY_LEN` |
 | :---- | :---- | :---- |
 | HKDF-EXPAND-SHA-384 | 0 | 48 |
 
 - `KDF_ID`  
   An integer representing the selected KDF
-- `KDF_INTERMEDIATE_KEY_LEN`  
+- `KDF_KEY_LEN`  
   An integer representing the length, in bytes, of the key to derive for use as a KDF key
 
 ## FLOE Ciphertext Layout
@@ -155,7 +159,25 @@ Depending on how you implement the code, these may be inlined, provided by the p
   Defined as `FLOE_KDF(key, iv, aad, "DEK:" || I2BE(MASK(segmentNumber, AEAD_ROTATION_MASK), 8), AEAD_KEY_LEN)`.
   This value may be internally cached by implementations.
 
-### Public Encryption Functions
+### Semi-Public Functions (Random Access)
+
+FLOE can be defined in terms of four functions which support random access (as per the raAE definition).
+While this interface is a fully secure one (as per raAE) it does not protect developers against their own mistakes
+as much as the streaming/online interface.
+Thus, these methods should generally be internal implementation details.
+However, depending on the specific use-case, these APIs may be the correct level of abstraction to be made public.
+They are more challenging to use correctly because they no longer protect the developer from a number of mistakes:
+
+- They do not enforce that all required segments are encrypted.  
+- They do not enforce that `encryptSegment` is never called multiple times for a given position/terminal indicator
+- They do not prevent encryption of segments with higher positions than the terminal segment
+- If a decryptor does not already know the correct length of the ciphertext (i.e., maximum position) then it is difficult for them to distiguish truncation versus just trying to read past the end.
+- If an adversary can cause a decryptor to attempt decryption of a valid segment with the incorrect position/terminal indicator, then FLOE loses commitment properties.
+
+In practice, this means that these API should likely not be exposed directly to developers but instead be used to construct higher-level (safe) APIs.
+For example, a developer of a client-side encryption library for cloud block storage, might choose to use FLOE.
+While they could simply use the online APIs above to stream the file to the cloud, using these random access APIs would permit them to spin up a number of threads to encrypt (and possibly upload) segments in parallel.
+Similarly, they could use these random access APIs to do random reads of the uploaded object.
 
 ```txt
 startEncryption(key, aad) -> (State, Header)
@@ -163,47 +185,12 @@ startEncryption(key, aad) -> (State, Header)
 
   HeaderPrefix = PARAM_ENCODE(params) || iv
   HeaderTag = FLOE_KDF(key, iv, aad, "HEADER_TAG:", 32)
-  MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_LEN)
+  MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_KEY_LEN)
   Header = HeaderPrefix || HeaderTag
 
-  State = {MessageKey, iv, aad, Counter = 0, Closed = False}
+  State = {MessageKey, iv, aad}
   return (State, Header)
 ```
-
-```txt
-encryptSegment(State, plaintext) -> (State, EncryptedSegment)
-  assert(State.Closed == False)
-  assert(len(plaintext) == ENC_SEG_LEN - AEAD_IV_LEN - AEAD_TAG_LEN - 4)
-  assert(State.Counter != AEAD_MAX_SEGMENTS - 1)
-
-  aead_key = DERIVE_KEY(state.MessageKey, state.iv, state.aad, State.Counter) 
-  aead_iv = RND(AEAD_IV_LEN)
-  aead_aad = I2BE(State.Counter, 8) || 0x00
-  (aead_ciphertext, tag) = AEAD_ENC(aead_key, aead_iv, plaintext, aead_aad)
-
-  EncryptedSegment = 0xFFFFFFFF || aead_iv || aead_ciphertext || tag
-  State.Counter++
-  return (State, EncryptedSegment)
-```
-
-```txt
-encryptLastSegment(State, plaintext) -> EncryptedSegment
-  assert(State.Closed == False)
-  assert(len(plaintext) >= 0)
-  assert(len(plaintext) <= ENC_SEG_LEN - AEAD_IV_LEN - AEAD_TAG_LEN - 4)
-
-  aead_key = DERIVE_KEY(state.MessageKey, state.iv, state.aad, State.Counter) 
-  aead_iv = RND(AEAD_IV_LEN)
-  aead_aad = I2BE(State.Counter, 8) || 0x01
-  (aead_ciphertext, tag) = AEAD_ENC(aead_key, aead_iv, plaintext, aead_aad)  
-
-  FinalSegementLength = 4 + AEAD_IV_LEN + len(aead_ciphertext) + AEAD_TAG_LEN
-  EncryptedSegment = I2BE(FinalSegementLength, 4) || aead_iv || aead_ciphertext || tag
-  State.Closed = True
-  return EncryptedSegment
-```
-
-### Public Decryption Functions
 
 ```txt
 startDecryption(key, aad, header) -> State
@@ -217,23 +204,105 @@ startDecryption(key, aad, header) -> State
   if ctEq(ExpectedHeaderTag, HeaderTag) == FALSE: // Must be constant time
     throw("Invalid Header Tag")
 
-  MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_LEN)
-  State = {MessageKey, iv, aad, Counter = 0, Closed = False}
+  MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_KEY_LEN)
+  State = {MessageKey, iv, aad}
   return State
 ```
 
 ```txt
-decryptSegment(State, EncryptedSegment) -> (State, Plaintext)
-  assert(State.Closed == False)
-  assert(len(EncryptedSegment) == ENC_SEG_LEN)
-  assert(BE2I(EncryptedSegment[:4]) == 0xFFFFFFFF)
-  assert(State.Counter != AEAD_MAX_SEGMENTS - 1)
+encryptSegment(State, plaintext, position, is_final) -> (State, EncryptedSegment)
+  assert(len(plaintext) >= 0)
+  if is_final:
+    assert(len(plaintext) <= ENC_SEG_LEN - AEAD_IV_LEN - AEAD_TAG_LEN - 4)
+    aad_tail = 0x01
+  else:
+    assert(len(plaintext) == ENC_SEG_LEN - AEAD_IV_LEN - AEAD_TAG_LEN - 4)
+    aad_tail = 0x00
 
-  aead_key = DERIVE_KEY(state.MessageKey, state.iv, state.aad, State.Counter)
+  aead_key = DERIVE_KEY(state.MessageKey, state.iv, state.aad, position) 
+  aead_iv = RND(AEAD_IV_LEN)
+  aead_aad = I2BE(position, 8) || aad_tail
+  (aead_ciphertext, tag) = AEAD_ENC(aead_key, aead_iv, plaintext, aead_aad)
+
+  if is_final:
+    FinalSegementLength = 4 + AEAD_IV_LEN + len(aead_ciphertext) + AEAD_TAG_LEN
+    segment_header = I2BE(FinalSegementLength, 4) || aead_iv || aead_ciphertext || tag
+  else:
+    segment_header = 0xFFFFFFFF
+
+  EncryptedSegment = segment_header || aead_iv || aead_ciphertext || tag
+  return (State, EncryptedSegment)
+```
+
+```txt
+decryptSegment(State, EncryptedSegment, position, is_final) -> (State, Plaintext)
+  if is_final:
+    assert(len(EncryptedSegment) >= AEAD_IV_LEN + AEAD_TAG_LEN + 4)
+    assert(len(EncryptedSegment) <= ENC_SEG_LEN)
+    assert(BE2I(EncryptedSegment[:4]) == len(EncryptedSegment))
+    aad_tail = 0x01
+  else:
+    assert(len(EncryptedSegment) == ENC_SEG_LEN)
+    assert(BE2I(EncryptedSegment[:4]) == 0xFFFFFFFF)
+    aad_tail = 0x00
+
+  aead_key = DERIVE_KEY(state.MessageKey, state.iv, state.aad, position)
   (aead_iv, aead_ciphertext, tag) = SPLIT(EncryptedSegment[4:], AEAD_IV_LEN, AEAD_TAG_LEN)
-  aead_aad = I2BE(State.Counter, 8) || 0x00
+  aead_aad = I2BE(position, 8) || aad_tail
+
   // Next line will throw if AEAD decryption fails
   Plaintext = AEAD_DEC(aead_key, aead_iv, aead_ciphertext, aead_aad)
+
+  return (State, Plaintext)
+```
+
+### Public Streaming/Online Function
+
+These functions provide a safe interface to FLOE and are the recommended public API.
+
+```txt
+startOnlineEncryption(key, aad) -> (State, Header)
+  (State, Header) = startEncryption(key, aad)
+  State.Counter = 0
+  State.Closed = False
+  return (State, Header)
+```
+
+```txt
+encryptOnlineSegment(State, plaintext) -> (State, EncryptedSegment)
+  assert(State.Closed == False)
+  assert(State.Counter != AEAD_MAX_SEGMENTS - 1)
+
+  (State, EncryptedSegment) = encryptSegment(State, plaintext, State.Counter, False)
+
+  State.Counter++
+  return (State, EncryptedSegment)
+```
+
+```txt
+encryptLastSegment(State, plaintext) -> EncryptedSegment
+  assert(State.Closed == False)
+  
+  (State, EncryptedSegment) = encryptSegment(State, plaintext, State.Counter, True)
+
+  State.Closed = True
+  return EncryptedSegment
+```
+
+```txt
+startOnlineDecryption(key, aad, header) -> State
+  State = startDecryption(key, aad, header)
+  State.Counter = 0
+  State.Closed = False
+  return State
+```
+
+```txt
+decryptOnlineSegment(State, EncryptedSegment) -> (State, Plaintext)
+  assert(State.Closed == False)
+  assert(State.Counter != AEAD_MAX_SEGMENTS - 1)
+
+  (State, Plaintext) = decryptSegment(State, EncryptedSegment, State.Counter, False)
 
   State.Counter++
   return (State, Plaintext)
@@ -242,26 +311,19 @@ decryptSegment(State, EncryptedSegment) -> (State, Plaintext)
 ```txt
 decryptLastSegment(State, EncryptedSegment) -> Plaintext
   assert(State.Closed == False)
-  assert(len(EncryptedSegment) >= AEAD_IV_LEN + AEAD_TAG_LEN + 4)
-  assert(len(EncryptedSegment) <= ENC_SEG_LEN)
-  assert(BE2I(EncryptedSegment[:4]) == len(EncryptedSegment))
 
-  aead_key = DERIVE_KEY(state.MessageKey, state.iv, state.aad, State.Counter)
-  (aead_iv, aead_ciphertext, tag) = SPLIT(EncryptedSegment[:4], AEAD_IV_LEN, AEAD_TAG_LEN)
-  aead_aad = I2BE(State.Counter, 8) || 0x01
-  // Next line will throw if AEAD decryption fails
-  Plaintext = AEAD_DEC(aead_key, aead_iv, aead_ciphertext, aead_aad)
+  (State, Plaintext) = decryptSegment(State, EncryptedSegment, State.Counter, True)
 
   State.Closed = True
   return Plaintext
 ```
 
-#### Auxiliary Public Decryption Function
+#### Auxiliary Public Online Decryption Function
 
 This is a helper function which makes the FLOE API nicer to use but has no impact on its correctness or security properties.
 
 ```txt
-decryptAnySegment(State, EncryptedSegment) -> (State, Plaintext)
+decryptAnyOnlineSegment(State, EncryptedSegment) -> (State, Plaintext)
   if BE2I(EncryptedSegment[:4]) == 0xFFFFFFFF:
     return decryptSegment(State, EncryptedSegment)
   else:
