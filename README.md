@@ -51,7 +51,8 @@ if we need to build something new anyway, we want the result to be better in as 
   For symmetric encryption, this is primarily through IV reuse, key wearout, or key misuse.
   FLOE is designed to defend against all three of these issues.
   FLOE does not take in an external IV.
-  Internal KDFs mean that a single key can be used to encrypt at least **INSERT_VALUE** messages before cryptographic wearout occurs.
+  Internal KDFs mean that a single key can be used to encrypt messages before cryptographic wearout occurs.
+  (Reasonable parameters permit up to 2<sup>65</sup> bytes or 32 exabytes, with an adversarial advantage of &lt;2<sup>-32</sup>.)
   The internal KDF also makes it highly unlikely that even if a key were to be used with FLOE and another cryptographic algorithm that the security of data *encrypted with FLOE* would remain intact.
 - Externally reviewed  
   Any cryptographic proposal must be carefully reviewed by numerous experts.
