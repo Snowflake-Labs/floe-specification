@@ -84,6 +84,7 @@ Please let us know about them via a issue or pull request so that we can evaluat
 | Name | Language(s) | Maintainer | Notes |
 |-|-|-|-|
 | [floe](https://github.com/snowflakedb/floe) | Java | Snowflake | Implementation used by Snowflake for client side code
+| [zig-floe](https://github.com/jedisct1/zig-floe) | Zig | Frank Denis | |
 
 ## License
 
