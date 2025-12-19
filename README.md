@@ -56,8 +56,8 @@ if we need to build something new anyway, we want the result to be better in as 
   The internal KDF also makes it highly unlikely that even if a key were to be used with FLOE and another cryptographic algorithm that the security of data *encrypted with FLOE* would remain intact.
 - Externally reviewed  
   Any cryptographic proposal must be carefully reviewed by numerous experts.
-  In addition to our in house cryptographers, we also consulted with experts from a major university.
-  The paper has not been published yet but will be linked here as soon as it is available.
+  In addition to our in house cryptographers, we also consulted with experts from Cornell and UNC.
+  The resulting paper "Random-Access AEAD for Fast Lightweight Online Encryption" is available on the [IACR ePrint servers](https://eprint.iacr.org/2025/2275) and has been accepted to Real World Crypto 2026.
   As of now, no security issues have been found with the design.
 
 ## Building
