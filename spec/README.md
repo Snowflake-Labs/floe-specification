@@ -1,6 +1,6 @@
 # FLOE Specification
 
-Fast Lightweight Online Encryption (FLOE) is a secure random access authenticated encryption (raAE) scheme as defined in a soon to be published paper.
+Fast Lightweight Online Encryption (FLOE) is a secure random access authenticated encryption (raAE) scheme as defined in [Random-Access AEAD for Fast Lightweight Online Encryption](https://eprint.iacr.org/2025/2275).
 All secure (ra-ROR) raAE schemes are also nOAE2 secure as defined by [HRRV15](https://eprint.iacr.org/2015/189).
 FLOE is inspired heavily by the work in HRRV15 and others.
 FLOE can be thought of as a family of algorithms, each specified by a set a parameters.
