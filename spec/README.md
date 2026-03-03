@@ -7,10 +7,12 @@ FLOE can be thought of as a family of algorithms, each specified by a set a para
 (This is similar to how [HPKE](https://www.rfc-editor.org/rfc/rfc9180.html) is defined.)
 
 This specification defines four *public* functions for the random access case (raAE): `startEncryption`, `encryptSegment` and their decryption equivalents.
-For usecases that do not require random access, we strongly recommend that instead of exposing `encryptSegment` and `decryptSegment` that you expose the sequention/online equivalents of them:
+For use cases that do not require random access, we strongly recommend that instead of exposing `encryptSegment` and `decryptSegment` that you expose the sequention/online equivalents of them:
 `encryptOnlineSegment`, `encryptLastSegment`, and their decryption equivalents.
 These four methods (along with the two `start` functions) support the online/sequential use case and are harder to misuse.
 An implementation may choose not to expose those methods directly to callers but instead implement its own API on top of the "official" FLOE functions.
+
+An additional copy of this specification is hosted on The Community Cryptography Specification Project at [c2sp.org/FLOE](https://c2sp.org/FLOE).
 
 ## Terminology
 
@@ -115,6 +117,9 @@ While their behavior is defined, their implementation is out of scope for this s
 - `I2BE(val, len) -> bytes`  
   Encodes `val` as an unsigned big-endian value of exactly `len` bytes.
   It will never be called with a value out of range.
+- `BE2I(bytes) -> len`  
+  Decodes `bytes` as an unsigned big-endian value and returns it an an unsigned integer.
+  It will never be called with a value out of range.
 - `RND(len) -> bytes`  
   Returns `len` cryptographically random bytes.
 - `AEAD_ENC(key, data, aad) -> (iv, ct, tag)`  
@@ -149,7 +154,7 @@ Depending on how you implement the code, these may be inlined, provided by the p
   - `prefix || body || suffix = data`  
   - It aborts if the above is not possible
 - `PARAM_ENCODE(params) -> bytes`  
-  Defined as `I2BE(AEAD_ID, 1) || I2BE(HASH_ID, 1) || I2BE(ENC_SEG_LEN, 4) || I2BE(FLOE_IV_LEN, 4)`.
+  Defined as `I2BE(AEAD_ID, 1) || I2BE(KDF_ID, 1) || I2BE(ENC_SEG_LEN, 4) || I2BE(FLOE_IV_LEN, 4)`.
   The output is always exactly 10 bytes long.
 - `FLOE_KDF(key, iv, aad, purpose, len) -> byte[len]`  
   Defined as `KDF(key, PARAM_ENCODE(params) || iv || purpose || aad, len)` where `params` is implicit from the context.
@@ -171,7 +176,7 @@ They are more challenging to use correctly because they no longer protect the de
 - They do not enforce that all required segments are encrypted.  
 - They do not enforce that `encryptSegment` is never called multiple times for a given position/terminal indicator
 - They do not prevent encryption of segments with higher positions than the terminal segment
-- If a decryptor does not already know the correct length of the ciphertext (i.e., maximum position) then it is difficult for them to distiguish truncation versus just trying to read past the end.
+- If a decryptor does not already know the correct length of the ciphertext (i.e., maximum position) then it is difficult for them to distinguish truncation versus just trying to read past the end.
 - If an adversary can cause a decryptor to attempt decryption of a valid segment with the incorrect position/terminal indicator, then FLOE loses commitment properties.
 
 In practice, this means that these API should likely not be exposed directly to developers but instead be used to construct higher-level (safe) APIs.
@@ -225,10 +230,10 @@ encryptSegment(State, plaintext, position, is_final) -> (State, EncryptedSegment
   (aead_ciphertext, tag) = AEAD_ENC(aead_key, aead_iv, plaintext, aead_aad)
 
   if is_final:
-    FinalSegementLength = 4 + AEAD_IV_LEN + len(aead_ciphertext) + AEAD_TAG_LEN
-    segment_header = I2BE(FinalSegementLength, 4) || aead_iv || aead_ciphertext || tag
+    FinalSegmentLength = 4 + AEAD_IV_LEN + len(aead_ciphertext) + AEAD_TAG_LEN
+    segment_header = I2BE(FinalSegmentLength, 4)
   else:
-    segment_header = 0xFFFFFFFF
+    segment_header = I2BE(0xFFFFFFFF, 4)
 
   EncryptedSegment = segment_header || aead_iv || aead_ciphertext || tag
   return (State, EncryptedSegment)
@@ -251,7 +256,7 @@ decryptSegment(State, EncryptedSegment, position, is_final) -> (State, Plaintext
   aead_aad = I2BE(position, 8) || aad_tail
 
   // Next line will throw if AEAD decryption fails
-  Plaintext = AEAD_DEC(aead_key, aead_iv, aead_ciphertext, aead_aad)
+  Plaintext = AEAD_DEC(aead_key, aead_iv, aead_ciphertext, aead_aad, tag)
 
   return (State, Plaintext)
 ```
@@ -325,7 +330,7 @@ This is a helper function which makes the FLOE API nicer to use but has no impac
 ```txt
 decryptAnyOnlineSegment(State, EncryptedSegment) -> (State, Plaintext)
   if BE2I(EncryptedSegment[:4]) == 0xFFFFFFFF:
-    return decryptSegment(State, EncryptedSegment)
+    return decryptOnlineSegment(State, EncryptedSegment)
   else:
     return decryptLastSegment(State, EncryptedSegment)
 ```
