@@ -4,6 +4,8 @@ Fast Lightweight Online Encryption (FLOE) is a cryptographic construction design
 This repository contains the [public specification](spec/README.md) of FLOE, known answer tests (in `kats/`), and reference code in several different languages.
 The source code is all released under the Apache 2.0 license.
 
+An additional copy of this specification is hosted on The Community Cryptography Specification Project at [c2sp.org/FLOE](https://c2sp.org/FLOE).
+
 If any security issues are found with FLOE or the implementations, please contact us at [security@snowflake.com](mailto:security@snowflake.com).
 
 ## Motivation
@@ -42,7 +44,7 @@ if we need to build something new anyway, we want the result to be better in as 
 - Random access reads  
   We don't always want to decrypt an entire file in order from the beginning to the end.
   Sometimes we want to read and decrypt arbitrary subsections of it.
-  FLOE must allow us to decrypt arbitrary subsections (subject to some reasonable overhead) while still giving us the same security properties for all read data we'd get for the entire file.
+  FLOE must allow us to efficiently decrypt arbitrary subsections (subject to some reasonable overhead) while still giving us the same security properties for all read data we'd get for the entire file.
 - Easy to implement safely  
   Implementation flaws in cryptographic code are often more significant than algorithmic flaws.
   FLOE is designed to be easy to safely implement given nothing more than SHA-256 and AES-GCM.
