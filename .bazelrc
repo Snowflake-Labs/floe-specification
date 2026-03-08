@@ -21,3 +21,5 @@ coverage --copt=-ffile-compilation-dir=.
 build --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect
 build --output_groups=+clippy_checks
 build --test_env=RUST_BACKTRACE=1
+
+build --action_env=BAZEL_CXXOPTS="-std=c++20"
