@@ -95,7 +95,12 @@ func (a FloeAead) goAead(key []byte) (*cipher.AEAD, error) {
 	if err != nil {
 		return nil, err
 	}
-	aead, err := cipher.NewGCM(block)
+	// We only support 12 byte IVs right now
+	if a.IvLen() != 12 {
+		return nil, errors.New("Only 12 byte IVs are supported")
+	}
+	// This implicitly prepends a 12 byte IV
+	aead, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +184,11 @@ func (p FloeParams) deriveKey(key, iv, aad []byte, segmentNumber uint64) ([]byte
 }
 
 func (p FloeParams) PtSegLen() int {
-	return int(p.EncSegLen) - p.Aead.IvLen() - p.Aead.TagLen() - 4
+	return int(p.EncSegLen) - p.SegOverhead()
+}
+
+func (p FloeParams) SegOverhead() int {
+	return p.Aead.IvLen() + p.Aead.TagLen() + 4
 }
 
 func (p FloeParams) HeaderLen() int {
@@ -285,11 +294,7 @@ func (e *FloeEncryptor) EncryptSegment(plaintext []byte) ([]byte, error) {
 	aead := *aeadPtr
 
 	// aead_iv = RND(AEAD_IV_LEN)
-	aead_iv := make([]byte, e.Params.Aead.IvLen())
-	_, err = rand.Read(aead_iv)
-	if err != nil {
-		return nil, err
-	}
+	// The IV is automatically generated and prepended now
 
 	// aead_aad = I2BE(State.Counter) || 0x00
 	aead_aad := make([]byte, 0)
@@ -302,10 +307,9 @@ func (e *FloeEncryptor) EncryptSegment(plaintext []byte) ([]byte, error) {
 	// (aead_ciphertext, tag) = AEAD_ENC(State.AeadKey, aead_iv, plaintext, aead_aad)
 	encrypted_segment := make([]byte, e.Params.EncSegLen)
 
-	aead.Seal(encrypted_segment[:e.Params.Aead.IvLen()+4], aead_iv, plaintext, aead_aad)
+	aead.Seal(encrypted_segment[:4], nil, plaintext, aead_aad)
 	// EncryptedSegment = 0xFFFFFFFF || aead_iv || aead_ciphertext || tag
 	binary.BigEndian.PutUint32(encrypted_segment, ^uint32(0))
-	copy(encrypted_segment[4:], aead_iv)
 	// State.Counter++
 	e.counter++
 	// return (State, EncryptedSegment)
@@ -336,11 +340,7 @@ func (e *FloeEncryptor) EncryptLastSegment(plaintext []byte) ([]byte, error) {
 	aead := *aeadPtr
 
 	// aead_iv = RND(AEAD_IV_LEN)
-	aead_iv := make([]byte, e.Params.Aead.IvLen())
-	_, err = rand.Read(aead_iv)
-	if err != nil {
-		return nil, err
-	}
+	// IV is implicitly generated and prepended
 
 	// aead_aad = I2BE(State.Counter) || 0x01
 	aead_aad := make([]byte, 0)
@@ -352,10 +352,9 @@ func (e *FloeEncryptor) EncryptLastSegment(plaintext []byte) ([]byte, error) {
 
 	// (aead_ciphertext, tag) = AEAD_ENC(State.AeadKey, aead_iv, plaintext, aead_aad)
 	encrypted_segment := make([]byte, 4+len(plaintext)+e.Params.Aead.IvLen()+e.Params.Aead.TagLen())
-	aead.Seal(encrypted_segment[:e.Params.Aead.IvLen()+4], aead_iv, plaintext, aead_aad)
+	aead.Seal(encrypted_segment[:4], nil, plaintext, aead_aad)
 	// EncryptedSegment = 0xFFFFFFFF || aead_iv || aead_ciphertext || tag
 	binary.BigEndian.PutUint32(encrypted_segment, uint32(len(encrypted_segment)))
-	copy(encrypted_segment[4:], aead_iv)
 
 	e.closed = true
 	// return (State, EncryptedSegment)
@@ -437,8 +436,8 @@ func (d *FloeDecryptor) DecryptSegment(encrypted_segment []byte) ([]byte, error)
 	aead := *aeadPtr
 
 	// (aead_iv, aead_ciphertext, tag) = SPLIT(EncryptedSegment[4:], AEAD_IV_LEN, AEAD_TAG_LEN)
-	aead_iv := encrypted_segment[4 : d.Params.Aead.IvLen()+4]
-	aead_ciphertext := encrypted_segment[d.Params.Aead.IvLen()+4:]
+	// IV is implicit
+	aead_ciphertext := encrypted_segment[4:]
 
 	// aead_aad = I2BE(State.Counter) || 0x00
 	aead_aad := make([]byte, 0)
@@ -450,7 +449,7 @@ func (d *FloeDecryptor) DecryptSegment(encrypted_segment []byte) ([]byte, error)
 
 	// Plaintext = AEAD_DEC(State.AeadKey, aead_iv, aead_ciphertext, aead_aad)
 	plaintext := make([]byte, d.Params.PtSegLen())
-	_, err = aead.Open(plaintext[:0], aead_iv, aead_ciphertext, aead_aad)
+	_, err = aead.Open(plaintext[:0], nil, aead_ciphertext, aead_aad)
 
 	// assert Plaintext != FAIL
 	if err != nil {
@@ -489,8 +488,8 @@ func (d *FloeDecryptor) DecryptLastSegment(encrypted_segment []byte) ([]byte, er
 	aead := *aeadPtr
 
 	// (aead_iv, aead_ciphertext, tag) = SPLIT(EncryptedSegment[4:], AEAD_IV_LEN, AEAD_TAG_LEN)
-	aead_iv := encrypted_segment[4 : d.Params.Aead.IvLen()+4]
-	aead_ciphertext := encrypted_segment[d.Params.Aead.IvLen()+4:]
+	// IV is implicity
+	aead_ciphertext := encrypted_segment[4:]
 
 	// aead_aad = I2BE(State.Counter) || 0x01
 	aead_aad := make([]byte, 0)
@@ -501,8 +500,8 @@ func (d *FloeDecryptor) DecryptLastSegment(encrypted_segment []byte) ([]byte, er
 	aead_aad = append(aead_aad, 1) // Final segment
 
 	// Plaintext = AEAD_DEC(State.AeadKey, aead_iv, aead_ciphertext, aead_aad)
-	plaintext := make([]byte, len(aead_ciphertext)-d.Params.Aead.TagLen())
-	_, err = aead.Open(plaintext[:0], aead_iv, aead_ciphertext, aead_aad)
+	plaintext := make([]byte, len(encrypted_segment)-d.Params.SegOverhead())
+	_, err = aead.Open(plaintext[:0], nil, aead_ciphertext, aead_aad)
 
 	// assert Plaintext != FAIL
 	if err != nil {
