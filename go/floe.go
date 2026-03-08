@@ -26,9 +26,8 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"io"
 
-	"golang.org/x/crypto/hkdf"
+	"crypto/hkdf"
 )
 
 type FloeHash uint8
@@ -158,9 +157,7 @@ func (p FloeParams) kdf(baseKey, iv, aad []byte, purpose string, length int) ([]
 	hkdfInfo = append(hkdfInfo, iv...)
 	hkdfInfo = append(hkdfInfo, purpose...)
 	hkdfInfo = append(hkdfInfo, aad...)
-	hkdfReader := hkdf.Expand(hash, baseKey, hkdfInfo)
-	result := make([]byte, length)
-	_, err := io.ReadFull(hkdfReader, result)
+	result, err := hkdf.Expand(hash, baseKey, string(hkdfInfo), length)
 	if err != nil {
 		return nil, err
 	}

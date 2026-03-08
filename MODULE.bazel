@@ -49,34 +49,67 @@ use_repo(maven, "maven")
 # Time for Go dependencies
 bazel_dep(
     name = "rules_go",
-    version = "0.50.1",
+    version = "0.60.0",
 )
-bazel_dep(name = "gazelle", version = "0.43.0")
+bazel_dep(name = "gazelle", version = "0.47.0")
 
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.24.1")
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
-use_repo(go_deps, "org_golang_x_crypto")
 
 # Rust dependencies
 bazel_dep(name = "rules_rust", version = "0.61.0")
+
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2024",
 )
 
 crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
-
-crate.spec(package = "aead", features = ["std"], version = "0.5.2")
-crate.spec(package = "aes-gcm", version = "0.10.3")
-crate.spec(package = "sha2", version = "0.10.8")
-crate.spec(package = "rand", version = "0.9.1")
-crate.spec(package = "hmac", version = "0.12.1")
-crate.spec(package = "subtle", version = "2.6")
-crate.spec(package = "zeroize", features = ["zeroize_derive"], version = "1.8.1")
-crate.spec(package = "hex", version = "0.4.3")
-crate.spec(package = "dhat", version = "0.3.3")
-crate.spec(package = "criterion", version = "0.3", features = ["html_reports"])
-
+crate.spec(
+    features = ["std"],
+    package = "aead",
+    version = "0.5.2",
+)
+crate.spec(
+    package = "aes-gcm",
+    version = "0.10.3",
+)
+crate.spec(
+    package = "sha2",
+    version = "0.10.8",
+)
+crate.spec(
+    package = "rand",
+    version = "0.9.1",
+)
+crate.spec(
+    package = "hmac",
+    version = "0.12.1",
+)
+crate.spec(
+    package = "subtle",
+    version = "2.6",
+)
+crate.spec(
+    features = ["zeroize_derive"],
+    package = "zeroize",
+    version = "1.8.1",
+)
+crate.spec(
+    package = "hex",
+    version = "0.4.3",
+)
+crate.spec(
+    package = "dhat",
+    version = "0.3.3",
+)
+crate.spec(
+    features = ["html_reports"],
+    package = "criterion",
+    version = "0.3",
+)
 crate.from_specs()
 use_repo(crate, "crates")
