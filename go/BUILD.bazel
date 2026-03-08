@@ -26,7 +26,21 @@ go_library(
 
 go_test(
     name = "go_test",
+    # keep: This intentionally does not include the FIPS test
     srcs = ["floe_test.go"],
     data = ["//:test_kats"],
     embed = [":go"],
+)
+
+go_test(
+    name = "go_test_fips",
+    srcs = [
+        "floe_fips_test.go",
+        "floe_test.go",
+    ],
+    data = ["//:test_kats"],
+    embed = [":go"],
+    env = {
+        "GODEBUG": "fips140=only",
+    },
 )

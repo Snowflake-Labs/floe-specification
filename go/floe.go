@@ -488,7 +488,7 @@ func (d *FloeDecryptor) DecryptLastSegment(encrypted_segment []byte) ([]byte, er
 	aead := *aeadPtr
 
 	// (aead_iv, aead_ciphertext, tag) = SPLIT(EncryptedSegment[4:], AEAD_IV_LEN, AEAD_TAG_LEN)
-	// IV is implicity
+	// IV is implicit
 	aead_ciphertext := encrypted_segment[4:]
 
 	// aead_aad = I2BE(State.Counter) || 0x01
