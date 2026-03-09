@@ -1,4 +1,4 @@
-// Copyright 2025 Snowflake Inc. 
+// Copyright 2025 Snowflake Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,4 @@
 
 module snowflake.com/floe
 
-go 1.23.4
-
-require golang.org/x/crypto v0.35.0
+go 1.24
