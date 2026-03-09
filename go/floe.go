@@ -307,6 +307,7 @@ func (e *FloeEncryptor) EncryptSegment(plaintext []byte) ([]byte, error) {
 	// (aead_ciphertext, tag) = AEAD_ENC(State.AeadKey, aead_iv, plaintext, aead_aad)
 	encrypted_segment := make([]byte, e.Params.EncSegLen)
 
+	// IV is nil because NewGCMWithRandomNonce generates an IV internally and prepends it
 	aead.Seal(encrypted_segment[:4], nil, plaintext, aead_aad)
 	// EncryptedSegment = 0xFFFFFFFF || aead_iv || aead_ciphertext || tag
 	binary.BigEndian.PutUint32(encrypted_segment, ^uint32(0))
@@ -352,6 +353,7 @@ func (e *FloeEncryptor) EncryptLastSegment(plaintext []byte) ([]byte, error) {
 
 	// (aead_ciphertext, tag) = AEAD_ENC(State.AeadKey, aead_iv, plaintext, aead_aad)
 	encrypted_segment := make([]byte, 4+len(plaintext)+e.Params.Aead.IvLen()+e.Params.Aead.TagLen())
+	// IV is nil because NewGCMWithRandomNonce generates an IV internally and prepends it
 	aead.Seal(encrypted_segment[:4], nil, plaintext, aead_aad)
 	// EncryptedSegment = 0xFFFFFFFF || aead_iv || aead_ciphertext || tag
 	binary.BigEndian.PutUint32(encrypted_segment, uint32(len(encrypted_segment)))
@@ -449,6 +451,7 @@ func (d *FloeDecryptor) DecryptSegment(encrypted_segment []byte) ([]byte, error)
 
 	// Plaintext = AEAD_DEC(State.AeadKey, aead_iv, aead_ciphertext, aead_aad)
 	plaintext := make([]byte, d.Params.PtSegLen())
+	// IV is nil because NewGCMWithRandomNonce reads the IV from the start of the ciphertext
 	_, err = aead.Open(plaintext[:0], nil, aead_ciphertext, aead_aad)
 
 	// assert Plaintext != FAIL
@@ -501,6 +504,7 @@ func (d *FloeDecryptor) DecryptLastSegment(encrypted_segment []byte) ([]byte, er
 
 	// Plaintext = AEAD_DEC(State.AeadKey, aead_iv, aead_ciphertext, aead_aad)
 	plaintext := make([]byte, len(encrypted_segment)-d.Params.SegOverhead())
+	// IV is nil because NewGCMWithRandomNonce reads the IV from the start of the ciphertext
 	_, err = aead.Open(plaintext[:0], nil, aead_ciphertext, aead_aad)
 
 	// assert Plaintext != FAIL
