@@ -19,7 +19,7 @@ use crate::{FloeParameterSpec, Result};
  * Trait representing a generic FLOE transformation, encryption or decryption.
  * Specific implementations may be *more* flexible in what they accept.
  */
-pub trait FloeCryptor {
+pub trait FloeSequentialCryptor {
     fn get_parameter_spec(&self) -> FloeParameterSpec;
     /**
      * The length of `input` to [FloeCryptor::process_segment]

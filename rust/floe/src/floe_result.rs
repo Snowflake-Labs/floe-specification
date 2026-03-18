@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::array::TryFromSliceError;
+use std::{array::TryFromSliceError, num::TryFromIntError, slice::GetDisjointMutError};
 
 use hmac::digest::InvalidLength;
 
@@ -112,16 +112,36 @@ impl From<TryFromSliceError> for Error {
     // This error has got to be our own fault
 }
 
+impl From<GetDisjointMutError> for Error {
+    fn from(err: GetDisjointMutError) -> Self {
+        Error::UnexpectedInternalError(Some(Box::new(err)))
+    }
+    // This error has got to be our own fault
+}
+
+impl From<TryFromIntError> for Error {
+    fn from(err: TryFromIntError) -> Self {
+        Error::UnexpectedInternalError(Some(Box::new(err)))
+    }
+    // This error has got to be our own fault
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::UnexpectedInternalError(err) => write!(f, "An unexpected internal error occurred {err:?}"),
-            Error::UnexpectedDependencyError(err) => write!(f, "An unexpected dependency error occurred: {err}"),
+            Error::UnexpectedInternalError(err) => {
+                write!(f, "An unexpected internal error occurred {err:?}")
+            }
+            Error::UnexpectedDependencyError(err) => {
+                write!(f, "An unexpected dependency error occurred: {err}")
+            }
             Error::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
             Error::Truncated => write!(f, "Input truncated. Final segment not found."),
             Error::Closed => write!(f, "FloeCryptor is closed and cannot take more input."),
             Error::SegmentOverflow => write!(f, "Too many segments"),
-            Error::DataOverflow{actual, expected} => write!(f, "Output too small. Needed {expected} but was {actual}"),
+            Error::DataOverflow { actual, expected } => {
+                write!(f, "Output too small. Needed {expected} but was {actual}")
+            }
             Error::BadHeader(msg) => write!(f, "Bad header: {}", msg),
             Error::MalformedSegment(msg) => write!(f, "Malformed segment: {}", msg),
             Error::BadTag => write!(f, "Bad segment tag"),

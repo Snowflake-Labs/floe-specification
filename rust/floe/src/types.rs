@@ -108,7 +108,11 @@ impl FloeKey {
     /// Create a FloeKey from raw key bytes and parameters
     pub fn new(key: &[u8], params: FloeParameterSpec) -> Result<Self> {
         if key.len() != params.get_aead().get_key_length() {
-            println!("Key length {} expected {}", key.len(), params.get_aead().get_key_length());
+            println!(
+                "Key length {} expected {}",
+                key.len(),
+                params.get_aead().get_key_length()
+            );
             return Error::invalid_input("Key was incorrect length");
         }
         Ok(Self {
@@ -154,7 +158,10 @@ impl FloeKey {
         }
 
         // We don't use `new` because we want to bypass some safety checks
-        Ok(Self { key: raw[0..length].to_owned(), params: self.params})
+        Ok(Self {
+            key: raw[0..length].to_owned(),
+            params: self.params,
+        })
     }
 }
 
@@ -265,10 +272,11 @@ impl FloeParameterSpec {
 
     /// The length in bytes of the plaintext data in a non-final segment
     pub fn get_plaintext_segment_length(&self) -> usize {
-        self.encrypted_segment_length
-            - self.aead.get_tag_length()
-            - self.aead.get_nonce_length()
-            - SEGMENT_LENGTH_PREFIX_LENGTH
+        self.encrypted_segment_length - self.get_segment_overhead()
+    }
+
+    pub fn get_segment_overhead(&self) -> usize {
+        self.aead.get_tag_length() + self.aead.get_nonce_length() + SEGMENT_LENGTH_PREFIX_LENGTH
     }
 
     /// The length in bytes of the header, including the encoded parameters, FLOE IV, and Header tag

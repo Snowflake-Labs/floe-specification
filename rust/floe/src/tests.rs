@@ -18,8 +18,8 @@ use std::{fs::OpenOptions, io::Write};
 use aead::{OsRng, rand_core::RngCore};
 
 use crate::{
-    Error, FloeAead, FloeCryptor, FloeDecryptor, FloeEncryptor, FloeHash, FloeKey,
-    FloeParameterSpec, GCM256_IV256_1M, GCM256_IV256_4K, Result,
+    Error, FloeAead, FloeHash, FloeKey, FloeParameterSpec, FloeSequentialCryptor,
+    FloeSequentialDecryptor, FloeSequentialEncryptor, GCM256_IV256_1M, GCM256_IV256_4K, Result,
 };
 
 const AAD: &[u8] = b"This is AAD";
@@ -38,7 +38,7 @@ fn encrypt_random(
         FloeKey::new(&[0u8; 32], params)?
     };
 
-    let mut encryptor = FloeEncryptor::new(&key, AAD)?;
+    let mut encryptor = FloeSequentialEncryptor::new(&key, AAD)?;
 
     let mut ct = encryptor.get_header().to_vec();
     let mut ct_segment = vec![0u8; encryptor.get_output_size()];
@@ -52,7 +52,8 @@ fn encrypt_random(
         }
     }
     if !encryptor.is_closed() {
-        encryptor.process_last_segment(&[], &mut ct_segment)?;
+        encryptor
+            .process_last_segment(&[], &mut ct_segment[..encryptor.size_of_last_output(0)?])?;
         ct.extend(&ct_segment[..encryptor.size_of_last_output(0)?]);
     }
     encryptor.finish()?;
@@ -60,7 +61,8 @@ fn encrypt_random(
 }
 
 fn decrypt_kat(key: &FloeKey, pt: &[u8], ct: &[u8]) -> Result<()> {
-    let mut decryptor = FloeDecryptor::new(key, AAD, ct)?;
+    let mut decryptor =
+        FloeSequentialDecryptor::new(key, AAD, &ct[..key.get_parameters().get_header_length()])?;
 
     let mut decrypted = vec![];
     let mut pt_segment = vec![0u8; decryptor.get_output_size()];
@@ -71,7 +73,10 @@ fn decrypt_kat(key: &FloeKey, pt: &[u8], ct: &[u8]) -> Result<()> {
             decryptor.process_segment(segment, &mut pt_segment)?;
             decrypted.extend(&pt_segment);
         } else {
-            decryptor.process_last_segment(segment, &mut pt_segment)?;
+            decryptor.process_last_segment(
+                segment,
+                &mut pt_segment[..decryptor.size_of_last_output(segment.len())?],
+            )?;
             decrypted.extend(&pt_segment[..decryptor.size_of_last_output(segment.len())?]);
         }
     }
