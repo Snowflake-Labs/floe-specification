@@ -3871,8 +3871,8 @@
         "bzlTransitiveDigest": "Qeb4vetIemCY7FfEGKTit6DLxEQEtGJB0y7J+TkNciI=",
         "usagesDigest": "DfHXHDmbuVcQLGpZ92ouE1HqZW93oGr7yacigOEpBSU=",
         "recordedFileInputs": {
-          "@@//rust/Cargo.lock": "157645efcd5f470b2521f75112a69879793464bb3ad81636cbb9570ae2eaf773",
-          "@@//rust/Cargo.toml": "93dcb50b4a8c82b5fbb1a6d4bf440dd18bdb14c46a0ed9fd16ce09e88a6d2f83"
+          "@@//rust/Cargo.lock": "d849b196ce8ede7d17a40840bcc3da47067607130af219feb62e7c9cfc4b0967",
+          "@@//rust/Cargo.toml": "dfe01508125749a7c0e8e4612bf7697291f6a1fa5ad521d4e77aef82457baa26"
         },
         "recordedDirentsInputs": {},
         "envVariables": {

@@ -33,16 +33,10 @@ struct CryptoCore {
 impl CryptoCore {
     fn new(message_key: FloeKey, floe_iv: Vec<u8>, aad: Vec<u8>) -> Result<CryptoCore> {
         if message_key.key.len() != message_key.get_parameters().get_hash().get_length() {
-            return Err(Error::InvalidInput(format!(
-                "Invalid key size. Was {}",
-                message_key.key.len()
-            )));
+            return Err(Error::InvalidInput);
         }
         if floe_iv.len() < 32 {
-            return Err(Error::InvalidInput(format!(
-                "Invalid FLOE IV size. Was {}",
-                floe_iv.len()
-            )));
+            return Err(Error::InvalidInput);
         }
         Ok(Self {
             message_key,
@@ -85,7 +79,6 @@ impl CryptoCore {
             return Err(Error::UnexpectedInternalError(None));
         }
         OsRng.fill_bytes(&mut output[..iv_length]);
-        // let nonce = &output[..iv_length];
 
         match floe_aead {
             FloeAead::AesGcm256 => {
@@ -132,32 +125,64 @@ impl CryptoCore {
     }
 }
 
+/**
+ * Exposes the FLOE random-access encryption APIs.
+ * 
+ * <div class="warning">The random-access APIs do not directly protect you against truncation attacks
+ * or prevent you from incorrectly encrypting the same segment multiple times.</div>
+ */
 pub struct FloeEncryptor {
     core: CryptoCore,
     header: Vec<u8>,
 }
 
 impl FloeEncryptor {
+    /**
+    Creates a new instance of [FloeEncryptor].
+
+    Corresponds to `startEncryption` from the specification
+
+    ```plain
+       startEncryption(key, aad) -> (State, Header)
+           iv = RND(FLOE_IV_LEN)
+
+           HeaderPrefix = PARAM_ENCODE(params) || iv
+           HeaderTag = FLOE_KDF(key, iv, aad, "HEADER_TAG:", 32)
+           MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_KEY_LEN)
+           Header = HeaderPrefix || HeaderTag
+
+           State = {MessageKey, iv, aad}
+           return (State, Header)
+       ```
+    */
     pub fn new(key: &FloeKey, aad: &[u8]) -> Result<Self> {
         let params = &key.get_parameters();
+        // iv = RND(FLOE_IV_LEN)
         let mut floe_iv = vec![0u8; params.get_iv_length()];
         let mut rng = OsRng;
         rng.fill_bytes(&mut floe_iv);
 
+        // HeaderPrefix = PARAM_ENCODE(params) || iv
         let mut header = params.get_encoded();
         header.extend(&floe_iv);
+        // HeaderTag = FLOE_KDF(key, iv, aad, "HEADER_TAG:", 32)
         let header_tag = &key
             .derive_key(&floe_iv, aad, FloePurpose::HeaderTag, HEADER_TAG_LENGTH)?
             .key;
+        // Header = HeaderPrefix || HeaderTag
         header.extend(header_tag);
+        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_KEY_LEN)
         let message_key = key.derive_key(
             &floe_iv,
             aad,
             FloePurpose::MessageKey,
             params.get_hash().get_length(),
         )?;
+
+        // State = {MessageKey, iv, aad}
         let core = CryptoCore::new(message_key, floe_iv, aad.to_owned())?;
 
+        // return (State, Header)
         Ok(Self { header, core })
     }
 
@@ -169,6 +194,39 @@ impl FloeEncryptor {
         self.core.message_key.get_parameters()
     }
 
+    /**
+    Encrypts a single FLOE segment with an index of `segment_number`.
+
+    `is_final` must be true only for the segment corresponding to the end of the entire ciphertext.
+    That is to say that if `encrypt_segment` is called in a monotonically increasing order of `segment_number`
+    values then `is_final` is true only for the last of those calls.
+    `ciphertext` is an output parameter which must be exactly [FloeEncryptor::get_size_of_output]`(plaintext.len())` long.
+    This method corresponds to `encryptSegment` from the specification
+    ```plain
+    encryptSegment(State, plaintext, segment_number, is_final) -> (State, EncryptedSegment)
+       assert(len(plaintext) >= 0)
+       if is_final:
+           assert(len(plaintext) <= ENC_SEG_LEN - AEAD_IV_LEN - AEAD_TAG_LEN - 4)
+           aad_tail = 0x01
+       else:
+           assert(len(plaintext) == ENC_SEG_LEN - AEAD_IV_LEN - AEAD_TAG_LEN - 4)
+           aad_tail = 0x00
+
+       aead_key = DERIVE_KEY(state.MessageKey, state.iv, state.aad, segment_number)
+       aead_iv = RND(AEAD_IV_LEN)
+       aead_aad = I2BE(segment_number, 8) || aad_tail
+       (aead_ciphertext, tag) = AEAD_ENC(aead_key, aead_iv, plaintext, aead_aad)
+
+       if is_final:
+           FinalSegmentLength = 4 + AEAD_IV_LEN + len(aead_ciphertext) + AEAD_TAG_LEN
+           segment_header = I2BE(FinalSegmentLength, 4)
+       else:
+           segment_header = I2BE(0xFFFFFFFF, 4)
+
+       EncryptedSegment = segment_header || aead_iv || aead_ciphertext || tag
+       return (State, EncryptedSegment)
+    ```
+    */
     pub fn encrypt_segment(
         &self,
         plaintext: &[u8],
@@ -178,17 +236,16 @@ impl FloeEncryptor {
     ) -> Result<()> {
         if is_final {
             if plaintext.len() > self.get_parameter_spec().get_plaintext_segment_length() {
-                return Error::invalid_input("");
+                return Err(Error::InvalidInput);
             }
             if segment_number >= self.get_parameter_spec().get_aead().get_max_segments() {
                 return Err(Error::SegmentOverflow);
             }
-            let output_size: u32 =
-                (plaintext.len() + self.get_parameter_spec().get_segment_overhead()).try_into()?;
+            let output_size: u32 = self.get_size_of_output(plaintext.len()).try_into()?;
             ciphertext[0..SEGMENT_LENGTH_PREFIX_LENGTH].copy_from_slice(&output_size.to_be_bytes());
         } else {
             if plaintext.len() != self.get_parameter_spec().get_plaintext_segment_length() {
-                return Error::invalid_input("");
+                return Err(Error::InvalidInput);
             }
             if segment_number >= self.get_parameter_spec().get_aead().get_max_segments() - 1 {
                 return Err(Error::SegmentOverflow);
@@ -196,10 +253,8 @@ impl FloeEncryptor {
             ciphertext[0..SEGMENT_LENGTH_PREFIX_LENGTH]
                 .copy_from_slice(&INTERNAL_SEGMENT_PREFIX.to_be_bytes());
         }
-        if ciphertext.len() != plaintext.len() + self.get_parameter_spec().get_segment_overhead() {
-            return Err(Error::InvalidInput(
-                "Output slice is the incorrect length".to_string(),
-            ));
+        if ciphertext.len() != self.get_size_of_output(plaintext.len()) {
+            return Err(Error::InvalidInput);
         }
         let aead_key = self.core.get_epoch_key(segment_number)?;
         let aad = self.core.build_segment_aad(segment_number, is_final);
@@ -212,49 +267,95 @@ impl FloeEncryptor {
 
         Ok(())
     }
+
+    pub fn get_size_of_output(&self, input_len: usize) -> usize {
+        input_len
+            + self
+                .core
+                .message_key
+                .get_parameters()
+                .get_segment_overhead()
+    }
 }
 
+/**
+ * Exposes the FLOE random-access decryption APIs.
+ * 
+ * <div class="warning">The random-access APIs do not directly protect you against truncation attacks
+ * or prevent you from incorrectly encrypting the same segment multiple times.</div>
+ */
 pub struct FloeDecryptor {
     core: CryptoCore,
 }
 
 impl FloeDecryptor {
+    /**
+    Creates a new instance of [FloeDecryptor].
+
+    Corresponds to `startDecryption` from the specification
+
+    ```plain
+       startDecryption(key, aad, header) -> State
+           EncodedParams = PARAM_ENCODE(params)
+           assert(len(header) == FLOE_IV_LEN + len(EncodedParams) + 32)
+
+           (HeaderParams, iv, HeaderTag) = SPLIT(header, len(EncodedParams), 32)
+           assert(HeaderParams == EncodedParams)
+
+           ExpectedHeaderTag = FLOE_KDF(key, iv, aad, "HEADER_TAG:")
+           if ctEq(ExpectedHeaderTag, HeaderTag) == FALSE: // Must be constant time
+               throw("Invalid Header Tag")
+
+           MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_KEY_LEN)
+           State = {MessageKey, iv, aad}
+           return State
+       ```
+    */
     pub fn new(key: &FloeKey, aad: &[u8], header: &[u8]) -> Result<Self> {
         let params = &key.get_parameters();
+        // assert(len(header) == FLOE_IV_LEN + len(EncodedParams) + 32)
         if header.len() != params.get_header_length() {
-            return Err(Error::BadHeader(format!(
-                "Header wrong length. Expected {} but was {}",
-                params.get_header_length(),
-                header.len()
-            )));
+            return Err(Error::BadHeader);
         }
+        // EncodedParams = PARAM_ENCODE(params)
         let expected_encoded = params.get_encoded();
+
+        // (HeaderParams, iv, HeaderTag) = SPLIT(header, len(EncodedParams), 32)
+        // assert(HeaderParams == EncodedParams)
         // This does not need to be constant time
         if expected_encoded != header[0..expected_encoded.len()] {
-            return Err(Error::BadHeader("Invalid parameters".to_string()));
+            return Err(Error::BadHeader);
         }
+        // (HeaderParams, iv, HeaderTag) = SPLIT(header, len(EncodedParams), 32)
         let floe_iv =
             &header[expected_encoded.len()..expected_encoded.len() + params.get_iv_length()];
+        // (HeaderParams, iv, HeaderTag) = SPLIT(header, len(EncodedParams), 32)
         let tag = &header[expected_encoded.len() + params.get_iv_length()..];
 
-        let header_tag = &key
+        // ExpectedHeaderTag = FLOE_KDF(key, iv, aad, "HEADER_TAG:")
+        let expected_tag = &key
             .derive_key(floe_iv, aad, FloePurpose::HeaderTag, HEADER_TAG_LENGTH)?
             .key;
 
+        // if ctEq(ExpectedHeaderTag, HeaderTag) == FALSE: // Must be constant time
+        //        throw("Invalid Header Tag")
         // This next comparison *must* be constant time
-        let tag_valid: bool = header_tag.ct_eq(tag).into();
+        let tag_valid: bool = expected_tag.ct_eq(tag).into();
         if !tag_valid {
             return Err(Error::BadHeaderTag);
         }
 
+        // MessageKey = FLOE_KDF(key, iv, aad, "MESSAGE_KEY:", KDF_KEY_LEN)
         let message_key = key.derive_key(
             floe_iv,
             aad,
             FloePurpose::MessageKey,
             params.get_hash().get_length(),
         )?;
+        // State = {MessageKey, iv, aad}
         let core = CryptoCore::new(message_key, floe_iv.to_owned(), aad.to_owned())?;
 
+        // return State
         Ok(Self { core })
     }
 
@@ -262,7 +363,13 @@ impl FloeDecryptor {
         self.core.message_key.get_parameters()
     }
 
-    /*
+    /**
+        Decrypts a single FLOE segment with an index of `position_number`.
+
+        The inputs `segment_number` and `is_final` must exactly match those of the corresponding [FloeEncryptor::encrypt_segment] call.
+
+        Corresponds to `decryptSegment` from the specification
+        ```plain
        decryptSegment(State, EncryptedSegment, position, is_final) -> (State, Plaintext)
            if is_final:
                assert(len(EncryptedSegment) >= AEAD_IV_LEN + AEAD_TAG_LEN + 4)
@@ -282,6 +389,7 @@ impl FloeDecryptor {
            Plaintext = AEAD_DEC(aead_key, aead_iv, aead_ciphertext, aead_aad, tag)
 
            return (State, Plaintext)
+        ```
     */
     pub fn decrypt_segment(
         &self,
@@ -295,7 +403,7 @@ impl FloeDecryptor {
                 return Err(Error::Truncated);
             }
             if ciphertext.len() > self.get_parameter_spec().get_encrypted_segment_length() {
-                return Err(Error::MalformedSegment("Segment is too long".to_string()));
+                return Err(Error::MalformedSegment);
             }
             let parsed_len = u32::from_be_bytes(
                 ciphertext[..SEGMENT_LENGTH_PREFIX_LENGTH]
@@ -303,18 +411,14 @@ impl FloeDecryptor {
                     .unwrap(),
             ) as usize;
             if parsed_len != ciphertext.len() {
-                return Err(Error::MalformedSegment(
-                    "Segment header length wrong".to_string(),
-                ));
+                return Err(Error::MalformedSegment);
             }
             if segment_number >= self.get_parameter_spec().get_aead().get_max_segments() {
                 return Err(Error::SegmentOverflow);
             }
         } else {
             if ciphertext.len() != self.get_parameter_spec().get_encrypted_segment_length() {
-                return Err(Error::MalformedSegment(
-                    "Segment is too wrong length".to_string(),
-                ));
+                return Err(Error::MalformedSegment);
             }
             let parsed_len = u32::from_be_bytes(
                 ciphertext[..SEGMENT_LENGTH_PREFIX_LENGTH]
@@ -322,18 +426,14 @@ impl FloeDecryptor {
                     .unwrap(),
             );
             if parsed_len != INTERNAL_SEGMENT_PREFIX {
-                return Err(Error::MalformedSegment(
-                    "Segment header length wrong".to_string(),
-                ));
+                return Err(Error::MalformedSegment);
             }
             if segment_number >= self.get_parameter_spec().get_aead().get_max_segments() - 1 {
                 return Err(Error::SegmentOverflow);
             }
         }
         if ciphertext.len() != plaintext.len() + self.get_parameter_spec().get_segment_overhead() {
-            return Err(Error::InvalidInput(
-                "Output slice is the incorrect length".to_string(),
-            ));
+            return Err(Error::InvalidInput);
         }
         let aead_key = self.core.get_epoch_key(segment_number)?;
         let aad = self.core.build_segment_aad(segment_number, is_final);
@@ -344,5 +444,14 @@ impl FloeDecryptor {
             plaintext,
         )?;
         Ok(())
+    }
+
+    pub fn get_size_of_output(&self, input_len: usize) -> usize {
+        input_len
+            - self
+                .core
+                .message_key
+                .get_parameters()
+                .get_segment_overhead()
     }
 }

@@ -18,7 +18,7 @@ use std::{fs::OpenOptions, io::Write};
 use aead::{OsRng, rand_core::RngCore};
 
 use crate::{
-    Error, FloeAead, FloeHash, FloeKey, FloeParameterSpec, FloeSequentialCryptor,
+    Error, FloeAead, FloeKdf, FloeKey, FloeParameterSpec, FloeSequentialCryptor,
     FloeSequentialDecryptor, FloeSequentialEncryptor, GCM256_IV256_1M, GCM256_IV256_4K, Result,
 };
 
@@ -117,10 +117,15 @@ fn test_kat(params: FloeParameterSpec, p_name: &str, name: &str) -> Result<()> {
 #[test]
 #[ignore = "generate new KATs"]
 fn generate_kats() -> Result<()> {
-    let p64 = FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, 64)?;
+    let p64 = FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, 64)?;
 
-    let rotation =
-        FloeParameterSpec::new_explicit(FloeAead::AesGcm256, FloeHash::Sha384, 40, 32, Some(-4));
+    let rotation = FloeParameterSpec::new_explicit(
+        FloeAead::AesGcm256,
+        FloeKdf::HkdfExpandSha384,
+        40,
+        32,
+        Some(-4),
+    );
 
     for p in [GCM256_IV256_4K, GCM256_IV256_1M, p64, rotation] {
         let p_name = if p == GCM256_IV256_4K {
@@ -164,10 +169,15 @@ fn generate_kats() -> Result<()> {
 
 #[test]
 fn kats() -> Result<()> {
-    let p64 = FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, 64)?;
+    let p64 = FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, 64)?;
 
-    let rotation =
-        FloeParameterSpec::new_explicit(FloeAead::AesGcm256, FloeHash::Sha384, 40, 32, Some(-4));
+    let rotation = FloeParameterSpec::new_explicit(
+        FloeAead::AesGcm256,
+        FloeKdf::HkdfExpandSha384,
+        40,
+        32,
+        Some(-4),
+    );
 
     for source in ["java", "go", "pub_java", "rust"] {
         for p in [GCM256_IV256_4K, GCM256_IV256_1M, p64, rotation] {
@@ -187,7 +197,8 @@ fn kats() -> Result<()> {
     }
 
     // There are a few Java generated only KATs
-    let segment_test_params = FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, 40)?;
+    let segment_test_params =
+        FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, 40)?;
     test_kat(segment_test_params, "lastSegAligned", "java")?;
     test_kat(segment_test_params, "lastSegEmpty", "java")?;
     Ok(())

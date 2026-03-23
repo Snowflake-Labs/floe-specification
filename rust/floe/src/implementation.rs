@@ -19,6 +19,8 @@ use crate::{
     ra,
 };
 
+/// Exposes the FLOE streaming (online) encryption APIs.
+/// See [FloeSequentialCryptor] for sample usage.
 pub struct FloeSequentialEncryptor {
     ra_core: ra::FloeEncryptor,
     counter: u64,
@@ -59,11 +61,7 @@ impl FloeSequentialCryptor for FloeSequentialEncryptor {
             return Err(Error::Closed);
         }
         if input.len() != self.get_input_size() {
-            return Error::invalid_input(&format!(
-                "Expected input of size {} but was {}",
-                self.get_input_size(),
-                input.len()
-            ));
+            return Err(Error::InvalidInput);
         }
         if self.counter >= self.get_parameter_spec().get_aead().get_max_segments() - 1 {
             return Err(Error::SegmentOverflow);
@@ -87,11 +85,7 @@ impl FloeSequentialCryptor for FloeSequentialEncryptor {
             return Err(Error::Closed);
         }
         if input.len() > self.get_input_size() {
-            return Error::invalid_input(&format!(
-                "Expected input of size no more than {} but was {}",
-                self.get_input_size(),
-                input.len()
-            ));
+            return Err(Error::InvalidInput);
         }
         let output_size = self.size_of_last_output(input.len())?;
         if output.len() < output_size {
@@ -113,11 +107,7 @@ impl FloeSequentialCryptor for FloeSequentialEncryptor {
 
     fn size_of_last_output(&self, input_size: usize) -> Result<usize> {
         if input_size > self.get_input_size() {
-            return Err(Error::InvalidInput(format!(
-                "Last segment must be between 0 and {}. Was {}",
-                self.get_input_size(),
-                input_size
-            )));
+            return Err(Error::InvalidInput);
         }
         let aead = self.get_parameter_spec().get_aead();
         Ok(SEGMENT_LENGTH_PREFIX_LENGTH
@@ -139,6 +129,8 @@ impl FloeSequentialCryptor for FloeSequentialEncryptor {
     }
 }
 
+/// Exposes the FLOE streaming (online) decryption APIs.
+/// See [FloeSequentialCryptor] for sample usage.
 pub struct FloeSequentialDecryptor {
     ra_core: ra::FloeDecryptor,
     counter: u64,
@@ -174,11 +166,7 @@ impl FloeSequentialCryptor for FloeSequentialDecryptor {
             return Err(Error::Closed);
         }
         if input.len() != self.get_input_size() {
-            return Error::invalid_input(&format!(
-                "Expected input of size {} but was {}",
-                self.get_input_size(),
-                input.len()
-            ));
+            return Err(Error::InvalidInput);
         }
         if output.len() < self.get_output_size() {
             return Err(Error::DataOverflow {
@@ -192,10 +180,7 @@ impl FloeSequentialCryptor for FloeSequentialDecryptor {
             // We've hit the last segment and our caller hasn't noticed.
             return self.process_last_segment(input, output);
         } else if segment_length_header != INTERNAL_SEGMENT_PREFIX {
-            return Err(Error::MalformedSegment(format!(
-                "Expected segment prefix of FFFFFF but was {:?}",
-                &input[0..SEGMENT_LENGTH_PREFIX_LENGTH]
-            )));
+            return Err(Error::MalformedSegment);
         }
         if self.counter >= self.get_parameter_spec().get_aead().get_max_segments() {
             return Err(Error::SegmentOverflow);
@@ -221,11 +206,7 @@ impl FloeSequentialCryptor for FloeSequentialDecryptor {
         }
         let input_size = u32::from_be_bytes(input[..SEGMENT_LENGTH_PREFIX_LENGTH].try_into()?);
         if (input_size as usize) != input.len() {
-            return Err(Error::MalformedSegment(format!(
-                "Expected segment of length {} but was {}",
-                input_size,
-                input.len()
-            )));
+            return Err(Error::MalformedSegment);
         }
 
         self.ra_core
@@ -239,12 +220,7 @@ impl FloeSequentialCryptor for FloeSequentialDecryptor {
         let min_size =
             SEGMENT_LENGTH_PREFIX_LENGTH + aead.get_nonce_length() + aead.get_tag_length();
         if input_size < min_size || input_size > self.get_input_size() {
-            return Err(Error::InvalidInput(format!(
-                "Last segment must be between {} and {}. Was {}",
-                min_size,
-                self.get_input_size(),
-                input_size
-            )));
+            return Err(Error::InvalidInput);
         }
         Ok(input_size - min_size)
     }

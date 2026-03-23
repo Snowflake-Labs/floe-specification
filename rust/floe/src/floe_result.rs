@@ -27,7 +27,7 @@ pub enum Error {
      * Calling code provided invalid input to FLOE.
      * This is always a result of buggy calling code.
      */
-    InvalidInput(String),
+    InvalidInput,
     /**
      * The FLOE library encountered an internal error which should not be possible.
      * This is always a result of a bug in FLOE.
@@ -43,11 +43,11 @@ pub enum Error {
      */
     Truncated,
     /**
-     * A [crate::FloeCryptor] was used to process data after it was closed.
+     * A [crate::FloeSequentialCryptor] was used to process data after it was closed.
      */
     Closed,
     /**
-     * A [crate::FloeCryptor] was asked to process more segments than is allowed by the [crate::FloeAead].
+     * A [crate::FloeSequentialCryptor] was asked to process more segments than is allowed by the [crate::FloeAead].
      */
     SegmentOverflow,
     /**
@@ -57,7 +57,7 @@ pub enum Error {
     /**
      * The header is invalid without needing to check the tag.
      */
-    BadHeader(String),
+    BadHeader,
     /**
      * The tag in the header is incorrect.
      */
@@ -65,7 +65,7 @@ pub enum Error {
     /**
      * An encrypted segment is malformed in a way that can be detected without use of cryptography.
      */
-    MalformedSegment(String),
+    MalformedSegment,
     /**
      * An encrypted segment is cryptographically corrupt and cannot be decrypted.
      */
@@ -73,10 +73,6 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn invalid_input<T>(msg: &str) -> Result<T> {
-        Err(Error::InvalidInput(msg.to_string()))
-    }
-
     #[cfg(test)]
     pub(crate) fn internal<E: std::error::Error + 'static>(err: E) -> Error {
         Error::UnexpectedInternalError(Some(Box::new(err)))
@@ -135,15 +131,15 @@ impl std::fmt::Display for Error {
             Error::UnexpectedDependencyError(err) => {
                 write!(f, "An unexpected dependency error occurred: {err}")
             }
-            Error::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
+            Error::InvalidInput => write!(f, "Invalid input"),
             Error::Truncated => write!(f, "Input truncated. Final segment not found."),
             Error::Closed => write!(f, "FloeCryptor is closed and cannot take more input."),
             Error::SegmentOverflow => write!(f, "Too many segments"),
             Error::DataOverflow { actual, expected } => {
                 write!(f, "Output too small. Needed {expected} but was {actual}")
             }
-            Error::BadHeader(msg) => write!(f, "Bad header: {}", msg),
-            Error::MalformedSegment(msg) => write!(f, "Malformed segment: {}", msg),
+            Error::BadHeader => write!(f, "Bad header"),
+            Error::MalformedSegment => write!(f, "Malformed segment"),
             Error::BadTag => write!(f, "Bad segment tag"),
             Error::BadHeaderTag => write!(f, "Bad Header: Invalid Tag"),
         }

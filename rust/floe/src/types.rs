@@ -26,20 +26,29 @@ use crate::{
     },
 };
 
-/// Standard parameters with: [FloeAead::AesGcm256], [FloeHash::Sha384], 32 byte FLOE IV, 4KB encrypted segment length
+/// Standard parameters with: [FloeAead::AesGcm256], [FloeKdf::HkdfExpandSha384], 32 byte FLOE IV, 4KB encrypted segment length
 pub const GCM256_IV256_4K: FloeParameterSpec = FloeParameterSpec {
     aead: FloeAead::AesGcm256,
-    hash: FloeHash::Sha384,
+    hash: FloeKdf::HkdfExpandSha384,
     encrypted_segment_length: 4 * 1024,
     iv_length: DEFAULT_FLOE_IV_LENGTH,
     override_rotation_mask: None,
 };
 
-/// Standard parameters with: [FloeAead::AesGcm256], [FloeHash::Sha384], 32 byte FLOE IV, 1MB encrypted segment length
+/// Standard parameters with: [FloeAead::AesGcm256], [FloeKdf::HkdfExpandSha384], 32 byte FLOE IV, 1MB encrypted segment length
 pub const GCM256_IV256_1M: FloeParameterSpec = FloeParameterSpec {
     aead: FloeAead::AesGcm256,
-    hash: FloeHash::Sha384,
+    hash: FloeKdf::HkdfExpandSha384,
     encrypted_segment_length: 1024 * 1024,
+    iv_length: DEFAULT_FLOE_IV_LENGTH,
+    override_rotation_mask: None,
+};
+
+/// Standard parameters with: [FloeAead::AesGcm256], [FloeKdf::HkdfExpandSha384], 32 byte FLOE IV, 16MB encrypted segment length
+pub const GCM256_IV256_16M: FloeParameterSpec = FloeParameterSpec {
+    aead: FloeAead::AesGcm256,
+    hash: FloeKdf::HkdfExpandSha384,
+    encrypted_segment_length: 16 * 1024 * 1024,
     iv_length: DEFAULT_FLOE_IV_LENGTH,
     override_rotation_mask: None,
 };
@@ -51,17 +60,17 @@ pub enum FloeAead {
     AesGcm256,
 }
 
-/// Hash function used with HKDF for header tag and key derivation
+/// KDF used within FLOE
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FloeHash {
-    Sha384,
+pub enum FloeKdf {
+    HkdfExpandSha384,
 }
 
 /// Parameters which define a specific use of FLOE
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FloeParameterSpec {
     aead: FloeAead,
-    hash: FloeHash,
+    hash: FloeKdf,
     encrypted_segment_length: usize,
     iv_length: usize,
     override_rotation_mask: Option<u64>,
@@ -113,7 +122,7 @@ impl FloeKey {
                 key.len(),
                 params.get_aead().get_key_length()
             );
-            return Error::invalid_input("Key was incorrect length");
+            return Err(Error::InvalidInput);
         }
         Ok(Self {
             key: key.to_owned(),
@@ -126,6 +135,13 @@ impl FloeKey {
         let mut key = vec![0u8; params.get_aead().get_key_length()];
         OsRng.fill_bytes(&mut key);
         Ok(Self { key, params })
+    }
+
+    /// Returns the raw cryptographic key.
+    /// 
+    /// <div class="warning">This is a sensitive cryptographic key which should only be handled with great care.</div>
+    pub fn get_raw_key(&self) -> &[u8] {
+        &self.key
     }
 
     pub fn get_parameters(&self) -> FloeParameterSpec {
@@ -143,7 +159,7 @@ impl FloeKey {
         type HmacSha384 = Hmac<Sha384>;
 
         let mut hmac = match self.params.hash {
-            FloeHash::Sha384 => HmacSha384::new_from_slice(&self.key),
+            FloeKdf::HkdfExpandSha384 => HmacSha384::new_from_slice(&self.key),
         }?;
 
         hmac.update(&self.params.get_encoded());
@@ -208,28 +224,26 @@ impl FloeAead {
     }
 }
 
-impl FloeHash {
+impl FloeKdf {
     pub(crate) fn get_id(&self) -> u8 {
         match self {
-            FloeHash::Sha384 => 0,
+            FloeKdf::HkdfExpandSha384 => 0,
         }
     }
 
     pub(crate) fn get_length(&self) -> usize {
         match self {
-            FloeHash::Sha384 => 48,
+            FloeKdf::HkdfExpandSha384 => 48,
         }
     }
 }
 
 impl FloeParameterSpec {
-    pub fn new(aead: FloeAead, hash: FloeHash, encrypted_segment_length: usize) -> Result<Self> {
+    pub fn new(aead: FloeAead, hash: FloeKdf, encrypted_segment_length: usize) -> Result<Self> {
         if encrypted_segment_length
             <= aead.get_tag_length() + aead.get_nonce_length() + SEGMENT_LENGTH_PREFIX_LENGTH
         {
-            return Err(crate::Error::InvalidInput(
-                "encrypted_segment_length is too short".to_string(),
-            ));
+            return Err(Error::InvalidInput);
         }
         Ok(FloeParameterSpec {
             aead,
@@ -243,7 +257,7 @@ impl FloeParameterSpec {
     #[cfg(test)]
     pub(crate) fn new_explicit(
         aead: FloeAead,
-        hash: FloeHash,
+        hash: FloeKdf,
         encrypted_segment_length: usize,
         iv_length: usize,
         override_rotation_mask: Option<i64>,
@@ -261,7 +275,7 @@ impl FloeParameterSpec {
         self.aead
     }
 
-    pub fn get_hash(&self) -> FloeHash {
+    pub fn get_hash(&self) -> FloeKdf {
         self.hash
     }
 
@@ -310,7 +324,7 @@ impl FloeParameterSpec {
 mod test {
     use crate::{Error, constants::SEGMENT_LENGTH_PREFIX_LENGTH};
 
-    use super::{FloeAead, FloeHash, FloeParameterSpec, GCM256_IV256_1M, GCM256_IV256_4K};
+    use super::{FloeAead, FloeKdf, FloeParameterSpec, GCM256_IV256_1M, GCM256_IV256_4K};
 
     #[test]
     pub fn known_encoding() -> Result<(), Box<dyn std::error::Error>> {
@@ -329,12 +343,14 @@ mod test {
 
     #[test]
     pub fn create_specs() -> Result<(), Box<dyn std::error::Error>> {
-        let spec = FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, 4 * 1024)?;
+        let spec =
+            FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, 4 * 1024)?;
         assert_eq!(spec, GCM256_IV256_4K);
         assert_eq!(spec.get_encoded(), GCM256_IV256_4K.get_encoded());
         assert_ne!(spec, GCM256_IV256_1M);
 
-        let spec = FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, 1024 * 1024)?;
+        let spec =
+            FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, 1024 * 1024)?;
         assert_ne!(spec, GCM256_IV256_4K);
         assert_eq!(spec.get_encoded(), GCM256_IV256_1M.get_encoded());
         assert_eq!(spec, GCM256_IV256_1M);
@@ -343,22 +359,23 @@ mod test {
             + FloeAead::AesGcm256.get_tag_length()
             + SEGMENT_LENGTH_PREFIX_LENGTH;
         // Minimum size is encrypting one byte
-        FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, overhead + 1)?;
+        FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, overhead + 1)?;
 
-        let failed_result = FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, overhead);
+        let failed_result =
+            FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, overhead);
         assert!(failed_result.is_err());
         let actual_error = failed_result.err().unwrap();
-        if let Error::InvalidInput(_) = actual_error {
+        if let Error::InvalidInput = actual_error {
             // expected
         } else {
             panic!("Wrong error. {:?}", actual_error);
         }
 
         let failed_result =
-            FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, overhead - 1);
+            FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, overhead - 1);
         assert!(failed_result.is_err());
         let actual_error = failed_result.err().unwrap();
-        if let Error::InvalidInput(_) = actual_error {
+        if let Error::InvalidInput = actual_error {
             // expected
         } else {
             panic!("Wrong error. {:?}", actual_error);
