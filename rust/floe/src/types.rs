@@ -161,7 +161,7 @@ impl FloeKey {
             FloeKdf::HkdfExpandSha384 => HmacSha384::new_from_slice(&self.key),
         }?;
 
-        let raw = hmac
+        let key_array = hmac
             .chain_update(&self.params.get_encoded())
             .chain_update(iv)
             .chain_update(purpose.as_bytes())
@@ -170,13 +170,13 @@ impl FloeKey {
             .finalize()
             .into_bytes();
 
-        if raw.len() < length {
+        if key_array.len() < length {
             return Err(Error::UnexpectedInternalError(None));
         }
 
         // We don't use `new` because we want to bypass some safety checks
         Ok(Self {
-            key: raw[0..length].to_owned(),
+            key: key_array[0..length].to_owned(),
             params: self.params,
         })
     }
