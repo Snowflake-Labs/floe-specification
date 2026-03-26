@@ -13,6 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::borrow::Cow;
+
 use aead::{OsRng, rand_core::RngCore as _};
 use hmac::{Hmac, Mac};
 use sha2::Sha384;
@@ -84,20 +86,17 @@ pub(crate) enum FloePurpose {
 }
 
 impl FloePurpose {
-    fn update<M>(&self, mac: &mut M) -> Result<()>
-    where
-        M: Mac,
-    {
+    fn as_bytes<'a>(&'a self) -> Cow<'a, [u8]> {
         match self {
-            FloePurpose::HeaderTag => mac.update(b"HEADER_TAG:"),
-            FloePurpose::MessageKey => mac.update(b"MESSAGE_KEY:"),
+            FloePurpose::HeaderTag => Cow::Borrowed(b"HEADER_TAG:"),
+            FloePurpose::MessageKey => Cow::Borrowed(b"MESSAGE_KEY:"),
             FloePurpose::SegmentKey(counter) => {
-                let mut val = b"DEK:########".to_owned();
+                let mut val = b"DEK:########".to_vec();
                 val[4..].copy_from_slice(&counter.to_be_bytes());
-                mac.update(&val)
+
+                Cow::Owned(val)
             }
         }
-        Ok(())
     }
 }
 
@@ -158,16 +157,18 @@ impl FloeKey {
         // TODO: Figure out how to zeroize this intermediate state
         type HmacSha384 = Hmac<Sha384>;
 
-        let mut hmac = match self.params.hash {
+        let hmac = match self.params.hash {
             FloeKdf::HkdfExpandSha384 => HmacSha384::new_from_slice(&self.key),
         }?;
 
-        hmac.update(&self.params.get_encoded());
-        hmac.update(iv);
-        purpose.update(&mut hmac)?;
-        hmac.update(aad);
-        hmac.update(&[1]);
-        let raw = hmac.finalize().into_bytes();
+        let raw = hmac
+            .chain_update(&self.params.get_encoded())
+            .chain_update(iv)
+            .chain_update(purpose.as_bytes())
+            .chain_update(aad)
+            .chain_update(&[1])
+            .finalize()
+            .into_bytes();
 
         if raw.len() < length {
             return Err(Error::UnexpectedInternalError(None));
