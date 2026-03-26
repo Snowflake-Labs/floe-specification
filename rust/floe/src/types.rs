@@ -13,8 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::borrow::Cow;
-
 use aead::{OsRng, rand_core::RngCore as _};
 use hmac::{Hmac, Mac};
 use sha2::Sha384;
@@ -82,23 +80,27 @@ pub struct FloeParameterSpec {
 pub(crate) enum FloePurpose {
     HeaderTag,
     MessageKey,
-    SegmentKey(u64),
+    SegmentKey { encoded_segment: [u8; 12] },
 }
 
 impl FloePurpose {
+    pub(crate) fn from_segment(segment: u64) -> Self {
+        let mut encoded_segment = [0u8; 12];
+
+        encoded_segment[..4].copy_from_slice(b"DEK:");
+        encoded_segment[4..].copy_from_slice(&segment.to_be_bytes());
+
+        Self::SegmentKey { encoded_segment }
+    }
+
     /// Convert this [`FloePurpose`] enum variant into a byte array.
     ///
     /// This representation can be used inside of the [`FloeKey::derive_key()`] method.
-    fn as_bytes<'a>(&'a self) -> Cow<'a, [u8]> {
+    fn as_bytes(&self) -> &[u8] {
         match self {
-            FloePurpose::HeaderTag => Cow::Borrowed(b"HEADER_TAG:"),
-            FloePurpose::MessageKey => Cow::Borrowed(b"MESSAGE_KEY:"),
-            FloePurpose::SegmentKey(counter) => {
-                let mut val = b"DEK:########".to_vec();
-                val[4..].copy_from_slice(&counter.to_be_bytes());
-
-                Cow::Owned(val)
-            }
+            FloePurpose::HeaderTag => b"HEADER_TAG:",
+            FloePurpose::MessageKey => b"MESSAGE_KEY:",
+            FloePurpose::SegmentKey { encoded_segment } => encoded_segment.as_slice(),
         }
     }
 }

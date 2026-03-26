@@ -51,7 +51,7 @@ impl CryptoCore {
         self.message_key.derive_key(
             &self.floe_iv,
             &self.aad,
-            crate::types::FloePurpose::SegmentKey(masked_counter),
+            crate::types::FloePurpose::from_segment(masked_counter),
             self.message_key
                 .get_parameters()
                 .get_aead()
