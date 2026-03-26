@@ -86,6 +86,9 @@ pub(crate) enum FloePurpose {
 }
 
 impl FloePurpose {
+    /// Convert this [`FloePurpose`] enum variant into a byte array.
+    ///
+    /// This representation can be used inside of the [`FloeKey::derive_key()`] method.
     fn as_bytes<'a>(&'a self) -> Cow<'a, [u8]> {
         match self {
             FloePurpose::HeaderTag => Cow::Borrowed(b"HEADER_TAG:"),
@@ -147,6 +150,16 @@ impl FloeKey {
         self.params
     }
 
+    /// Derive a new [`FloeKey`] from this root key.
+    ///
+    /// This function is a combination of the `FLOE_KDF` and `DERIVE_KEY` internal functions from
+    /// the [spec].
+    ///
+    /// Since the [`FloePurpose`] enum is used to encode the purpose of this KDF operation,
+    /// including the case where we create a segment key with a given position, having separate `FLOE_KDF`
+    /// and `DERIVE_KEY` functions isn't needed.
+    ///
+    /// [spec]: https://github.com/C2SP/C2SP/blob/main/FLOE.md#internal-functions
     pub(crate) fn derive_key(
         &self,
         iv: &[u8],
