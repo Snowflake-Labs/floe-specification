@@ -171,14 +171,22 @@ impl FloeKey {
             .into_bytes();
 
         if key_array.len() < length {
-            return Err(Error::UnexpectedInternalError(None));
-        }
+            Err(Error::UnexpectedInternalError(None))
+        } else {
+            // HMAC, depending on the HASH we're using and depending on the AEAD we're using, might
+            // return more bytes than we need for our key.
+            //
+            // Use `copy_from_slice()` to avoid a move, which turns into a memcpy under the hood, and
+            // only copy the requested number of bytes to the final key vec.
+            let mut key = vec![0u8; length];
+            key.copy_from_slice(&key_array[..length]);
 
-        // We don't use `new` because we want to bypass some safety checks
-        Ok(Self {
-            key: key_array[0..length].to_owned(),
-            params: self.params,
-        })
+            // Don't use the `new()` constructor as this would again check the length.
+            Ok(Self {
+                key,
+                params: self.params,
+            })
+        }
     }
 }
 
