@@ -154,14 +154,13 @@ impl FloeKey {
         purpose: FloePurpose,
         length: usize,
     ) -> Result<Self> {
-        // TODO: Figure out how to zeroize this intermediate state
         type HmacSha384 = Hmac<Sha384>;
 
         let hmac = match self.params.hash {
             FloeKdf::HkdfExpandSha384 => HmacSha384::new_from_slice(&self.key),
         }?;
 
-        let key_array = hmac
+        let mut key_array = hmac
             .chain_update(&self.params.get_encoded())
             .chain_update(iv)
             .chain_update(purpose.as_bytes())
@@ -171,6 +170,7 @@ impl FloeKey {
             .into_bytes();
 
         if key_array.len() < length {
+            key_array.zeroize();
             Err(Error::UnexpectedInternalError(None))
         } else {
             // HMAC, depending on the HASH we're using and depending on the AEAD we're using, might
@@ -180,6 +180,10 @@ impl FloeKey {
             // only copy the requested number of bytes to the final key vec.
             let mut key = vec![0u8; length];
             key.copy_from_slice(&key_array[..length]);
+
+            // We copied the important bits over, let's zeroize now since we don't want to leave a
+            // copy of this, potentially, secret key material around.
+            key_array.zeroize();
 
             // Don't use the `new()` constructor as this would again check the length.
             Ok(Self {
