@@ -80,24 +80,28 @@ pub struct FloeParameterSpec {
 pub(crate) enum FloePurpose {
     HeaderTag,
     MessageKey,
-    SegmentKey(u64),
+    SegmentKey { encoded_segment: [u8; 12] },
 }
 
 impl FloePurpose {
-    fn update<M>(&self, mac: &mut M) -> Result<()>
-    where
-        M: Mac,
-    {
+    pub(crate) fn from_segment(segment: u64) -> Self {
+        let mut encoded_segment = [0u8; 12];
+
+        encoded_segment[..4].copy_from_slice(b"DEK:");
+        encoded_segment[4..].copy_from_slice(&segment.to_be_bytes());
+
+        Self::SegmentKey { encoded_segment }
+    }
+
+    /// Convert this [`FloePurpose`] enum variant into a byte array.
+    ///
+    /// This representation can be used inside of the [`FloeKey::derive_key()`] method.
+    fn as_bytes(&self) -> &[u8] {
         match self {
-            FloePurpose::HeaderTag => mac.update(b"HEADER_TAG:"),
-            FloePurpose::MessageKey => mac.update(b"MESSAGE_KEY:"),
-            FloePurpose::SegmentKey(counter) => {
-                let mut val = b"DEK:########".to_owned();
-                val[4..].copy_from_slice(&counter.to_be_bytes());
-                mac.update(&val)
-            }
+            FloePurpose::HeaderTag => b"HEADER_TAG:",
+            FloePurpose::MessageKey => b"MESSAGE_KEY:",
+            FloePurpose::SegmentKey { encoded_segment } => encoded_segment.as_slice(),
         }
-        Ok(())
     }
 }
 
@@ -148,6 +152,16 @@ impl FloeKey {
         self.params
     }
 
+    /// Derive a new [`FloeKey`] from this root key.
+    ///
+    /// This function is a combination of the `FLOE_KDF` and `DERIVE_KEY` internal functions from
+    /// the [spec].
+    ///
+    /// Since the [`FloePurpose`] enum is used to encode the purpose of this KDF operation,
+    /// including the case where we create a segment key with a given position, having separate `FLOE_KDF`
+    /// and `DERIVE_KEY` functions isn't needed.
+    ///
+    /// [spec]: https://github.com/C2SP/C2SP/blob/main/FLOE.md#internal-functions
     pub(crate) fn derive_key(
         &self,
         iv: &[u8],
@@ -155,29 +169,43 @@ impl FloeKey {
         purpose: FloePurpose,
         length: usize,
     ) -> Result<Self> {
-        // TODO: Figure out how to zeroize this intermediate state
         type HmacSha384 = Hmac<Sha384>;
 
-        let mut hmac = match self.params.hash {
+        let hmac = match self.params.hash {
             FloeKdf::HkdfExpandSha384 => HmacSha384::new_from_slice(&self.key),
         }?;
 
-        hmac.update(&self.params.get_encoded());
-        hmac.update(iv);
-        purpose.update(&mut hmac)?;
-        hmac.update(aad);
-        hmac.update(&[1]);
-        let raw = hmac.finalize().into_bytes();
+        let mut key_array = hmac
+            .chain_update(&self.params.get_encoded())
+            .chain_update(iv)
+            .chain_update(purpose.as_bytes())
+            .chain_update(aad)
+            .chain_update(&[1])
+            .finalize()
+            .into_bytes();
 
-        if raw.len() < length {
-            return Err(Error::UnexpectedInternalError(None));
+        if key_array.len() < length {
+            key_array.zeroize();
+            Err(Error::UnexpectedInternalError(None))
+        } else {
+            // HMAC, depending on the HASH we're using and depending on the AEAD we're using, might
+            // return more bytes than we need for our key.
+            //
+            // Use `copy_from_slice()` to avoid a move, which turns into a memcpy under the hood, and
+            // only copy the requested number of bytes to the final key vec.
+            let mut key = vec![0u8; length];
+            key.copy_from_slice(&key_array[..length]);
+
+            // We copied the important bits over, let's zeroize now since we don't want to leave a
+            // copy of this, potentially, secret key material around.
+            key_array.zeroize();
+
+            // Don't use the `new()` constructor as this would again check the length.
+            Ok(Self {
+                key,
+                params: self.params,
+            })
         }
-
-        // We don't use `new` because we want to bypass some safety checks
-        Ok(Self {
-            key: raw[0..length].to_owned(),
-            params: self.params,
-        })
     }
 }
 
