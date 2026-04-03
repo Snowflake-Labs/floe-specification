@@ -20,12 +20,12 @@
 //! It is described in greater detail both in the primary specification repository
 //! at [github.com/Snowflake-Labs/floe-specification](https://www.github.com/Snowflake-Labs/floe-specification)
 //! and at [c2sp.org/FLOE](https://c2sp.org/FLOE).
-//! 
+//!
 //! We recommend that most developers use the streaming interfaces as implemented by
 //! [FloeSequentialEncryptor] and [FloeSequentialDecryptor] as they are much harder to misuse.
 //! More advanced users can directly use [FloeEncryptor] and [FloeDecryptor] if full random-access
 //! authenticated encryption is needed.
-//! 
+//!
 //! <div class="warning">The random-access APIs do not directly protect you against truncation attacks
 //! or prevent you from incorrectly encrypting the same segment multiple times.</div>
 

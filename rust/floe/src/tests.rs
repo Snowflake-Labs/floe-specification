@@ -13,9 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use rand::TryRng;
+use rand::rngs::SysRng;
 use std::{fs::OpenOptions, io::Write};
-
-use aead::{OsRng, rand_core::RngCore};
 
 use crate::{
     Error, FloeAead, FloeKdf, FloeKey, FloeParameterSpec, FloeSequentialCryptor,
@@ -30,10 +30,12 @@ fn encrypt_random(
     random_key: bool,
 ) -> Result<(Vec<u8>, Vec<u8>, FloeKey)> {
     let mut pt = vec![0u8; len];
-    OsRng.fill_bytes(&mut pt);
+    SysRng.try_fill_bytes(&mut pt)?;
 
     let key = if random_key {
-        FloeKey::new_random(params)?
+        let mut raw_key = [0u8; 32];
+        SysRng.try_fill_bytes(&mut raw_key)?;
+        FloeKey::new(&raw_key, params)?
     } else {
         FloeKey::new(&[0u8; 32], params)?
     };
@@ -88,9 +90,7 @@ fn decrypt_kat(key: &FloeKey, pt: &[u8], ct: &[u8]) -> Result<()> {
 const KAT_LOCATION: &str = "kats";
 
 fn read_hex_file(file_name: &str) -> Result<Vec<u8>> {
-    std::fs::read_to_string(file_name)
-        .map_err(Error::internal)
-        .map(|s| hex::decode(s.trim()).map_err(Error::internal))?
+    Ok(hex::decode(std::fs::read_to_string(file_name)?.trim())?)
 }
 
 #[test]
@@ -149,20 +149,16 @@ fn generate_kats() -> Result<()> {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(file_name)
-            .map_err(Error::internal)?;
-        file.write_all(hex::encode(pt).as_bytes())
-            .map_err(Error::internal)?;
+            .open(file_name)?;
+        file.write_all(hex::encode(pt).as_bytes())?;
 
         let file_name = format!("{}/rust_{}_ct.txt", KAT_LOCATION, p_name);
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .open(file_name)
-            .map_err(Error::internal)?;
-        file.write_all(hex::encode(ct).as_bytes())
-            .map_err(Error::internal)?;
+            .open(file_name)?;
+        file.write_all(hex::encode(ct).as_bytes())?;
     }
     Ok(())
 }
@@ -209,4 +205,17 @@ fn invalid_key_length() -> Result<()> {
     let key = FloeKey::new(&[0u8; 33], GCM256_IV256_1M);
     assert!(key.is_err());
     Ok(())
+}
+
+// Some useful additional traits for errors we can only see during testing
+impl From<std::io::Error> for Error {
+    fn from(_: std::io::Error) -> Self {
+        Error::UnexpectedDependencyError
+    }
+}
+
+impl From<hex::FromHexError> for Error {
+    fn from(_: hex::FromHexError) -> Self {
+        Error::UnexpectedDependencyError
+    }
 }

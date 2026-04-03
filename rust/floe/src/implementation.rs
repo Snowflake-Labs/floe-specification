@@ -175,7 +175,9 @@ impl FloeSequentialCryptor for FloeSequentialDecryptor {
             });
         }
         let segment_length_header =
-            u32::from_be_bytes(input[..SEGMENT_LENGTH_PREFIX_LENGTH].try_into()?);
+            u32::from_be_bytes(input[..SEGMENT_LENGTH_PREFIX_LENGTH].try_into().expect(
+                "This is safe because SEGMENT_LENGTH_PREFIX_LENGTH is the proper length for u32",
+            ));
         if (segment_length_header as usize) == input.len() {
             // We've hit the last segment and our caller hasn't noticed.
             return self.process_last_segment(input, output);
@@ -204,7 +206,7 @@ impl FloeSequentialCryptor for FloeSequentialDecryptor {
                 expected: self.get_output_size(),
             });
         }
-        let input_size = u32::from_be_bytes(input[..SEGMENT_LENGTH_PREFIX_LENGTH].try_into()?);
+        let input_size = u32::from_be_bytes(input[..SEGMENT_LENGTH_PREFIX_LENGTH].try_into().expect("This is safe because we know that SEGMENT_LENGTH_PREFIX_LENGTH is the proper length for u32"));
         if (input_size as usize) != input.len() {
             return Err(Error::MalformedSegment);
         }

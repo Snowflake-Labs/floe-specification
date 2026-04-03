@@ -20,10 +20,13 @@ use crate::{
     types::FloePurpose,
 };
 
-use aead::{AeadInPlace, KeyInit, OsRng, rand_core::RngCore};
+use aead::{AeadInPlace, KeyInit};
 use aes_gcm::Aes256Gcm;
+use rand::{TryRng, rngs::SysRng};
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
+#[derive(Zeroize, ZeroizeOnDrop)]
 struct CryptoCore {
     message_key: FloeKey,
     floe_iv: Vec<u8>,
@@ -31,6 +34,10 @@ struct CryptoCore {
 }
 
 impl CryptoCore {
+    /// Instantiates the core cryptographic logic of FLOE given the *message_key*.
+    /// (The message key is derived from the main FLOE key passed in by the user.)
+    /// This method returns an error if the parameters are not compatible with the
+    /// [FloeParameterSpec] associated with the message_key (currently due to length).
     fn new(message_key: FloeKey, floe_iv: Vec<u8>, aad: Vec<u8>) -> Result<CryptoCore> {
         if message_key.key.len() != message_key.get_parameters().get_hash().get_length() {
             return Err(Error::InvalidInput);
@@ -45,7 +52,8 @@ impl CryptoCore {
         })
     }
 
-    fn get_epoch_key(&self, counter: u64) -> Result<FloeKey> {
+    /// Derives the Epoch Key to be used directly with the AEAD to encrypt/decrypt the segment with a segment index of `counter`.
+    fn get_epoch_key(&self, counter: u64) -> FloeKey {
         let mask = self.message_key.get_parameters().get_rotation_mask();
         let masked_counter = counter & mask;
         self.message_key.derive_key(
@@ -59,6 +67,7 @@ impl CryptoCore {
         )
     }
 
+    /// Creates the AAD to be passed to the AEAD when encrypting/decrypting the specified segment.
     fn build_segment_aad(&self, counter: u64, last: bool) -> [u8; 9] {
         let mut result = [0u8; 9];
         result[0..8].copy_from_slice(&counter.to_be_bytes());
@@ -66,35 +75,42 @@ impl CryptoCore {
         result
     }
 
-    fn encrypt(
-        &self,
-        epoch_key: &FloeKey,
-        msg: &[u8],
-        aad: &[u8],
-        output: &mut [u8],
-    ) -> Result<()> {
+    /// Encrypt the specified segment.
+    /// `epoch_key` comes from [CryptoCore::get_epoch_key].
+    /// `aad` comes from [CryptoCore::build_segment_aad].
+    fn encrypt(&self, epoch_key: &FloeKey, msg: &[u8], aad: &[u8], output: &mut [u8]) {
         let floe_aead = epoch_key.get_parameters().get_aead();
         let iv_length = floe_aead.get_nonce_length();
-        if output.len() < iv_length + floe_aead.get_tag_length() + msg.len() {
-            return Err(Error::UnexpectedInternalError(None));
-        }
-        OsRng.fill_bytes(&mut output[..iv_length]);
+        debug_assert_eq!(
+            output.len(),
+            iv_length + floe_aead.get_tag_length() + msg.len()
+        );
+        SysRng
+            .try_fill_bytes(&mut output[..iv_length])
+            .expect("The system RNG should never fail");
 
         match floe_aead {
             FloeAead::AesGcm256 => {
-                let gcm = Aes256Gcm::new_from_slice(&epoch_key.key)?;
+                let gcm = Aes256Gcm::new_from_slice(&epoch_key.key).expect(
+                    "Unexpected because we explicitly construct keys of the proper length.",
+                );
                 output[iv_length..iv_length + msg.len()].copy_from_slice(msg);
-                let tag = {
-                    let [nonce, body] = output
-                        .get_disjoint_mut([0..iv_length, iv_length..iv_length + msg.len()])?;
-                    gcm.encrypt_in_place_detached(nonce[..iv_length].into(), aad, body)
-                }?;
-                output[iv_length + msg.len()..].copy_from_slice(tag.as_slice());
+                let (nonce, rest) = output.split_at_mut(iv_length);
+                let (body, rest) = rest.split_at_mut(msg.len());
+                let (tag_dest, rest) = rest.split_at_mut(floe_aead.get_tag_length());
+                debug_assert!(rest.is_empty());
+
+                let tag = gcm
+                    .encrypt_in_place_detached(nonce[..iv_length].into(), aad, body)
+                    .expect("Encryption is never expected to fail.");
+                tag_dest.copy_from_slice(tag.as_slice());
             }
         };
-        Ok(())
     }
 
+    /// Decrypt the specified segment. Returns an error if the AEAD tag is incorrect.
+    /// `epoch_key` comes from [CryptoCore::get_epoch_key].
+    /// `aad` comes from [CryptoCore::build_segment_aad].
     fn decrypt(
         &self,
         epoch_key: &FloeKey,
@@ -105,15 +121,11 @@ impl CryptoCore {
         let floe_aead = epoch_key.get_parameters().get_aead();
         let iv_length = floe_aead.get_nonce_length();
         let tag_length = floe_aead.get_tag_length();
-        if msg.len() < iv_length + floe_aead.get_tag_length() {
-            return Err(Error::UnexpectedInternalError(None));
-        }
-        if output.len() < msg.len() - iv_length - tag_length {
-            return Err(Error::UnexpectedInternalError(None));
-        }
-        let nonce = &msg[..iv_length];
-        let tag = &msg[msg.len() - tag_length..];
-        output.copy_from_slice(&msg[iv_length..msg.len() - tag_length]);
+        debug_assert!(msg.len() >= iv_length + floe_aead.get_tag_length());
+        debug_assert_eq!(output.len(), msg.len() - iv_length - tag_length);
+        let (nonce, rest) = msg.split_at(iv_length);
+        let (body, tag) = rest.split_at(rest.len() - tag_length);
+        output.copy_from_slice(body);
 
         match floe_aead {
             FloeAead::AesGcm256 => {
@@ -127,10 +139,11 @@ impl CryptoCore {
 
 /**
  * Exposes the FLOE random-access encryption APIs.
- * 
+ *
  * <div class="warning">The random-access APIs do not directly protect you against truncation attacks
  * or prevent you from incorrectly encrypting the same segment multiple times.</div>
  */
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct FloeEncryptor {
     core: CryptoCore,
     header: Vec<u8>,
@@ -140,9 +153,10 @@ impl FloeEncryptor {
     /**
     Creates a new instance of [FloeEncryptor].
 
-    Corresponds to `startEncryption` from the specification
-
-    ```plain
+    Corresponds to `startEncryption` from the specification.
+    */
+    /*
+     ```plain
        startEncryption(key, aad) -> (State, Header)
            iv = RND(FLOE_IV_LEN)
 
@@ -159,15 +173,15 @@ impl FloeEncryptor {
         let params = &key.get_parameters();
         // iv = RND(FLOE_IV_LEN)
         let mut floe_iv = vec![0u8; params.get_iv_length()];
-        let mut rng = OsRng;
-        rng.fill_bytes(&mut floe_iv);
+        let mut rng = SysRng;
+        rng.try_fill_bytes(&mut floe_iv)?;
 
         // HeaderPrefix = PARAM_ENCODE(params) || iv
         let mut header = params.get_encoded();
         header.extend(&floe_iv);
         // HeaderTag = FLOE_KDF(key, iv, aad, "HEADER_TAG:", 32)
         let header_tag = &key
-            .derive_key(&floe_iv, aad, FloePurpose::HeaderTag, HEADER_TAG_LENGTH)?
+            .derive_key(&floe_iv, aad, FloePurpose::HeaderTag, HEADER_TAG_LENGTH)
             .key;
         // Header = HeaderPrefix || HeaderTag
         header.extend(header_tag);
@@ -177,7 +191,7 @@ impl FloeEncryptor {
             aad,
             FloePurpose::MessageKey,
             params.get_hash().get_length(),
-        )?;
+        );
 
         // State = {MessageKey, iv, aad}
         let core = CryptoCore::new(message_key, floe_iv, aad.to_owned())?;
@@ -201,7 +215,9 @@ impl FloeEncryptor {
     That is to say that if `encrypt_segment` is called in a monotonically increasing order of `segment_number`
     values then `is_final` is true only for the last of those calls.
     `ciphertext` is an output parameter which must be exactly [FloeEncryptor::get_size_of_output]`(plaintext.len())` long.
-    This method corresponds to `encryptSegment` from the specification
+    This method corresponds to `encryptSegment` from the specification.
+    */
+    /*
     ```plain
     encryptSegment(State, plaintext, segment_number, is_final) -> (State, EncryptedSegment)
        assert(len(plaintext) >= 0)
@@ -241,7 +257,11 @@ impl FloeEncryptor {
             if segment_number >= self.get_parameter_spec().get_aead().get_max_segments() {
                 return Err(Error::SegmentOverflow);
             }
-            let output_size: u32 = self.get_size_of_output(plaintext.len()).try_into()?;
+            let output_size: u32 = self
+                .get_size_of_output(plaintext.len())
+                .expect("This is safe because we have already checked the input length")
+                .try_into()
+                .expect("This is safe because we know the max size of a segment can fit in u32");
             ciphertext[0..SEGMENT_LENGTH_PREFIX_LENGTH].copy_from_slice(&output_size.to_be_bytes());
         } else {
             if plaintext.len() != self.get_parameter_spec().get_plaintext_segment_length() {
@@ -253,37 +273,47 @@ impl FloeEncryptor {
             ciphertext[0..SEGMENT_LENGTH_PREFIX_LENGTH]
                 .copy_from_slice(&INTERNAL_SEGMENT_PREFIX.to_be_bytes());
         }
-        if ciphertext.len() != self.get_size_of_output(plaintext.len()) {
+        if ciphertext.len() != self.get_size_of_output(plaintext.len())? {
             return Err(Error::InvalidInput);
         }
-        let aead_key = self.core.get_epoch_key(segment_number)?;
+        let aead_key = self.core.get_epoch_key(segment_number);
         let aad = self.core.build_segment_aad(segment_number, is_final);
         self.core.encrypt(
             &aead_key,
             plaintext,
             &aad,
             &mut ciphertext[SEGMENT_LENGTH_PREFIX_LENGTH..],
-        )?;
+        );
 
         Ok(())
     }
 
-    pub fn get_size_of_output(&self, input_len: usize) -> usize {
-        input_len
+    pub fn get_size_of_output(&self, input_len: usize) -> Result<usize> {
+        if input_len
+            > self
+                .core
+                .message_key
+                .get_parameters()
+                .get_plaintext_segment_length()
+        {
+            return Err(Error::InvalidInput);
+        }
+        Ok(input_len
             + self
                 .core
                 .message_key
                 .get_parameters()
-                .get_segment_overhead()
+                .get_segment_overhead())
     }
 }
 
 /**
  * Exposes the FLOE random-access decryption APIs.
- * 
+ *
  * <div class="warning">The random-access APIs do not directly protect you against truncation attacks
  * or prevent you from incorrectly encrypting the same segment multiple times.</div>
  */
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct FloeDecryptor {
     core: CryptoCore,
 }
@@ -293,7 +323,8 @@ impl FloeDecryptor {
     Creates a new instance of [FloeDecryptor].
 
     Corresponds to `startDecryption` from the specification
-
+    */
+    /*
     ```plain
        startDecryption(key, aad, header) -> State
            EncodedParams = PARAM_ENCODE(params)
@@ -322,7 +353,7 @@ impl FloeDecryptor {
 
         // (HeaderParams, iv, HeaderTag) = SPLIT(header, len(EncodedParams), 32)
         // assert(HeaderParams == EncodedParams)
-        // This does not need to be constant time
+        // This does not need to be constant time because encryption *parameters* are considered to be public data in the security model.
         if expected_encoded != header[0..expected_encoded.len()] {
             return Err(Error::BadHeader);
         }
@@ -334,7 +365,7 @@ impl FloeDecryptor {
 
         // ExpectedHeaderTag = FLOE_KDF(key, iv, aad, "HEADER_TAG:")
         let expected_tag = &key
-            .derive_key(floe_iv, aad, FloePurpose::HeaderTag, HEADER_TAG_LENGTH)?
+            .derive_key(floe_iv, aad, FloePurpose::HeaderTag, HEADER_TAG_LENGTH)
             .key;
 
         // if ctEq(ExpectedHeaderTag, HeaderTag) == FALSE: // Must be constant time
@@ -351,7 +382,7 @@ impl FloeDecryptor {
             aad,
             FloePurpose::MessageKey,
             params.get_hash().get_length(),
-        )?;
+        );
         // State = {MessageKey, iv, aad}
         let core = CryptoCore::new(message_key, floe_iv.to_owned(), aad.to_owned())?;
 
@@ -369,6 +400,8 @@ impl FloeDecryptor {
         The inputs `segment_number` and `is_final` must exactly match those of the corresponding [FloeEncryptor::encrypt_segment] call.
 
         Corresponds to `decryptSegment` from the specification
+    */
+    /*
         ```plain
        decryptSegment(State, EncryptedSegment, position, is_final) -> (State, Plaintext)
            if is_final:
@@ -408,7 +441,7 @@ impl FloeDecryptor {
             let parsed_len = u32::from_be_bytes(
                 ciphertext[..SEGMENT_LENGTH_PREFIX_LENGTH]
                     .try_into()
-                    .unwrap(),
+                    .expect("This is safe because SEGMENT_LENGTH_PREFIX_LENGTH is the proper length for u32"),
             ) as usize;
             if parsed_len != ciphertext.len() {
                 return Err(Error::MalformedSegment);
@@ -423,7 +456,7 @@ impl FloeDecryptor {
             let parsed_len = u32::from_be_bytes(
                 ciphertext[..SEGMENT_LENGTH_PREFIX_LENGTH]
                     .try_into()
-                    .unwrap(),
+                    .expect("This is safe because SEGMENT_LENGTH_PREFIX_LENGTH is the proper length for u32"),
             );
             if parsed_len != INTERNAL_SEGMENT_PREFIX {
                 return Err(Error::MalformedSegment);
@@ -435,7 +468,7 @@ impl FloeDecryptor {
         if ciphertext.len() != plaintext.len() + self.get_parameter_spec().get_segment_overhead() {
             return Err(Error::InvalidInput);
         }
-        let aead_key = self.core.get_epoch_key(segment_number)?;
+        let aead_key = self.core.get_epoch_key(segment_number);
         let aad = self.core.build_segment_aad(segment_number, is_final);
         self.core.decrypt(
             &aead_key,
@@ -446,12 +479,15 @@ impl FloeDecryptor {
         Ok(())
     }
 
-    pub fn get_size_of_output(&self, input_len: usize) -> usize {
-        input_len
-            - self
-                .core
-                .message_key
-                .get_parameters()
-                .get_segment_overhead()
+    pub fn get_size_of_output(&self, input_len: usize) -> Result<usize> {
+        let overhead = self
+            .core
+            .message_key
+            .get_parameters()
+            .get_segment_overhead();
+        if input_len < overhead {
+            return Err(Error::InvalidInput);
+        }
+        Ok(input_len - overhead)
     }
 }

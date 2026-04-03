@@ -13,8 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{array::TryFromSliceError, num::TryFromIntError, slice::GetDisjointMutError};
-
 use hmac::digest::InvalidLength;
 
 /// Result type used for all FLOE operations
@@ -29,15 +27,10 @@ pub enum Error {
      */
     InvalidInput,
     /**
-     * The FLOE library encountered an internal error which should not be possible.
-     * This is always a result of a bug in FLOE.
-     */
-    UnexpectedInternalError(Option<Box<dyn std::error::Error>>),
-    /**
      * A dependency returned an unexpected error.
      * This is always a result of a bug in FLOE or one of FLOE's dependencies.
      */
-    UnexpectedDependencyError(Box<dyn std::error::Error>),
+    UnexpectedDependencyError,
     /**
      * FLOE expected more segments but did not receive them.
      */
@@ -72,64 +65,35 @@ pub enum Error {
     BadTag,
 }
 
-impl Error {
-    #[cfg(test)]
-    pub(crate) fn internal<E: std::error::Error + 'static>(err: E) -> Error {
-        Error::UnexpectedInternalError(Some(Box::new(err)))
-    }
-}
-
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::UnexpectedDependencyError(err) => Some(err.as_ref()),
-            Self::UnexpectedInternalError(err) => err.as_deref(),
-            _ => None,
-        }
+        None
     }
 }
 
 impl From<aead::Error> for Error {
-    fn from(err: aead::Error) -> Self {
-        Error::UnexpectedDependencyError(Box::new(err))
+    fn from(_: aead::Error) -> Self {
+        Error::UnexpectedDependencyError
     }
 }
 
 impl From<InvalidLength> for Error {
-    fn from(err: InvalidLength) -> Self {
-        Error::UnexpectedDependencyError(Box::new(err))
+    fn from(_: InvalidLength) -> Self {
+        Error::UnexpectedDependencyError
     }
 }
 
-impl From<TryFromSliceError> for Error {
-    fn from(err: TryFromSliceError) -> Self {
-        Error::UnexpectedInternalError(Some(Box::new(err)))
+impl From<rand::rngs::SysError> for Error {
+    fn from(_: rand::rngs::SysError) -> Self {
+        Error::UnexpectedDependencyError
     }
-    // This error has got to be our own fault
-}
-
-impl From<GetDisjointMutError> for Error {
-    fn from(err: GetDisjointMutError) -> Self {
-        Error::UnexpectedInternalError(Some(Box::new(err)))
-    }
-    // This error has got to be our own fault
-}
-
-impl From<TryFromIntError> for Error {
-    fn from(err: TryFromIntError) -> Self {
-        Error::UnexpectedInternalError(Some(Box::new(err)))
-    }
-    // This error has got to be our own fault
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::UnexpectedInternalError(err) => {
-                write!(f, "An unexpected internal error occurred {err:?}")
-            }
-            Error::UnexpectedDependencyError(err) => {
-                write!(f, "An unexpected dependency error occurred: {err}")
+            Error::UnexpectedDependencyError => {
+                write!(f, "An unexpected dependency error occurred")
             }
             Error::InvalidInput => write!(f, "Invalid input"),
             Error::Truncated => write!(f, "Input truncated. Final segment not found."),

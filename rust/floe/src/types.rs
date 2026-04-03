@@ -13,8 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use aead::{OsRng, rand_core::RngCore as _};
 use hmac::{Hmac, Mac};
+#[cfg(feature = "getrandom")]
+use rand::{TryRng, rngs::SysRng};
 use sha2::Sha384;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -135,14 +136,15 @@ impl FloeKey {
     }
 
     /// Generate a new random key appropriate for the given parameters
+    #[cfg(feature = "getrandom")]
     pub fn new_random(params: FloeParameterSpec) -> Result<Self> {
         let mut key = vec![0u8; params.get_aead().get_key_length()];
-        OsRng.fill_bytes(&mut key);
+        SysRng.try_fill_bytes(&mut key)?;
         Ok(Self { key, params })
     }
 
     /// Returns the raw cryptographic key.
-    /// 
+    ///
     /// <div class="warning">This is a sensitive cryptographic key which should only be handled with great care.</div>
     pub fn get_raw_key(&self) -> &[u8] {
         &self.key
@@ -168,43 +170,40 @@ impl FloeKey {
         aad: &[u8],
         purpose: FloePurpose,
         length: usize,
-    ) -> Result<Self> {
+    ) -> Self {
+        // TODO: Figure out how to zeroize this intermediate state
         type HmacSha384 = Hmac<Sha384>;
 
         let hmac = match self.params.hash {
             FloeKdf::HkdfExpandSha384 => HmacSha384::new_from_slice(&self.key),
-        }?;
+        }.expect("This error should be impossible because we explicitly configure each case and derive all keys appropriately");
 
         let mut key_array = hmac
-            .chain_update(&self.params.get_encoded())
+            .chain_update(self.params.get_encoded())
             .chain_update(iv)
             .chain_update(purpose.as_bytes())
             .chain_update(aad)
-            .chain_update(&[1])
+            .chain_update([1])
             .finalize()
             .into_bytes();
 
-        if key_array.len() < length {
-            key_array.zeroize();
-            Err(Error::UnexpectedInternalError(None))
-        } else {
-            // HMAC, depending on the HASH we're using and depending on the AEAD we're using, might
-            // return more bytes than we need for our key.
-            //
-            // Use `copy_from_slice()` to avoid a move, which turns into a memcpy under the hood, and
-            // only copy the requested number of bytes to the final key vec.
-            let mut key = vec![0u8; length];
-            key.copy_from_slice(&key_array[..length]);
+        debug_assert!(key_array.len() >= length);
+        // HMAC, depending on the HASH we're using and depending on the AEAD we're using, might
+        // return more bytes than we need for our key.
+        //
+        // Use `copy_from_slice()` to avoid a move, which turns into a memcpy under the hood, and
+        // only copy the requested number of bytes to the final key vec.
+        let mut key = vec![0u8; length];
+        key.copy_from_slice(&key_array[..length]);
 
-            // We copied the important bits over, let's zeroize now since we don't want to leave a
-            // copy of this, potentially, secret key material around.
-            key_array.zeroize();
+        // We copied the important bits over, let's zeroize now since we don't want to leave a
+        // copy of this, potentially, secret key material around.
+        key_array.zeroize();
 
-            // Don't use the `new()` constructor as this would again check the length.
-            Ok(Self {
-                key,
-                params: self.params,
-            })
+        // Don't use the `new()` constructor as this would again check the length.
+        Self {
+            key,
+            params: self.params,
         }
     }
 }
@@ -343,8 +342,7 @@ impl FloeParameterSpec {
 
     pub(crate) fn get_rotation_mask(&self) -> u64 {
         self.override_rotation_mask
-            .or_else(|| Option::Some(self.aead.get_rotation_mask()))
-            .unwrap()
+            .unwrap_or(self.aead.get_rotation_mask())
     }
 }
 

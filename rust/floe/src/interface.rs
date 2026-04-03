@@ -20,7 +20,7 @@ use crate::{FloeParameterSpec, Result};
  * Specific implementations may be *more* flexible in what they accept.
  * ```rust
  * use floe::{Error, FloeKey, FloeSequentialCryptor, FloeSequentialDecryptor, FloeSequentialEncryptor, GCM256_IV256_1M, Result};
- * 
+ *
  * // Normally you'd save your key in some safe location. But for the demo we'll generate a random one
  * // GCM256_IV256_1M is a generally useful chunk size
  * let sample_key = FloeKey::new_random(GCM256_IV256_1M);
@@ -29,18 +29,18 @@ use crate::{FloeParameterSpec, Result};
  * // We'll just use an all one plaintext for the demo and large enough to be multiple segments
  * let plaintext = vec![1u8; 3 * 1024 * 1024 + 512];
  * let aad = b"This is some aad";
- * 
- * let ciphertext = encryptData(&sample_key, &plaintext, aad);
+ *
+ * let ciphertext = encrypt_data(&sample_key, &plaintext, aad);
  * assert!(ciphertext.is_ok());
  * let ciphertext = ciphertext.unwrap();
- * 
+ *
  * // Finally, decrypt the result
- * let decrypted = decryptData(&sample_key, &ciphertext, aad);
+ * let decrypted = decrypt_data(&sample_key, &ciphertext, aad);
  * //assert!(decrypted.is_ok());
  * let decrypted = decrypted.unwrap();
  * assert_eq!(decrypted, plaintext);
- * 
- * fn encryptData(key: &FloeKey, data: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+ *
+ * fn encrypt_data(key: &FloeKey, data: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
  *   let mut encryptor = FloeSequentialEncryptor::new(key, aad)?;
  *   let mut result = encryptor.get_header().to_vec();
  *   let mut buff = vec![0u8; encryptor.get_output_size()];
@@ -63,8 +63,8 @@ use crate::{FloeParameterSpec, Result};
  *   }
  *   Ok(result)
  * }
- * 
- *  fn decryptData(key: &FloeKey, data: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+ *
+ *  fn decrypt_data(key: &FloeKey, data: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
  *   let header_length = key.get_parameters().get_header_length();
  *   let header = &data[..header_length];
  *   let ciphertext = &data[header_length..];
