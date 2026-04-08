@@ -20,7 +20,7 @@ use crate::{
     types::FloePurpose,
 };
 
-use aead::{AeadInPlace, KeyInit};
+use aead::{AeadInPlace, KeyInit, generic_array::GenericArray};
 use aes_gcm::Aes256Gcm;
 use rand::{TryRng, rngs::SysRng};
 use subtle::ConstantTimeEq;
@@ -94,14 +94,21 @@ impl CryptoCore {
                 let gcm = Aes256Gcm::new_from_slice(&epoch_key.key).expect(
                     "Unexpected because we explicitly construct keys of the proper length.",
                 );
-                output[iv_length..iv_length + msg.len()].copy_from_slice(msg);
+                // output is nonce || body || tag
+                // We can do the split_at_mut because we checked the length of output above
                 let (nonce, rest) = output.split_at_mut(iv_length);
                 let (body, rest) = rest.split_at_mut(msg.len());
                 let (tag_dest, rest) = rest.split_at_mut(floe_aead.get_tag_length());
                 debug_assert!(rest.is_empty());
 
+                // Copy the message into body (which is precisely length msg.len()). We will encrypt this
+                body.copy_from_slice(msg);
+                // Cast nonce to a fixed-size array. This cannot panic because nonce has
+                // len iv_length, which is always equal to the AES-GCM-256 IV length
+                let nonce = GenericArray::from_slice(nonce);
+
                 let tag = gcm
-                    .encrypt_in_place_detached(nonce[..iv_length].into(), aad, body)
+                    .encrypt_in_place_detached(nonce, aad, body)
                     .expect("Encryption is never expected to fail.");
                 tag_dest.copy_from_slice(tag.as_slice());
             }
