@@ -64,12 +64,12 @@
 
 namespace sf {
 extern const ub1* RAW_AAD;
-extern const absl::Span<const ub1> AAD;
+extern const std::span<const ub1> AAD;
 
 const std::string KAT_BASE = "kats/";
 
 FloeResult decryptKat(std::string& testName, FloeParameterSpec param,
-                      const absl::Span<const ub1>& in, std::vector<ub1>& out);
+                      const std::span<const ub1>& in, std::vector<ub1>& out);
 FloeResult encryptKat(std::string& testName, FloeParameterSpec param, size_t segCount,
                       std::vector<ub1>& pt, std::vector<ub1>& ct);
 

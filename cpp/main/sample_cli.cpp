@@ -15,8 +15,8 @@
 
 #include <cstring>
 #include <iostream>
+#include <span>
 
-#include "absl/types/span.h"
 #include "floe.hpp"
 #include "floe_test_shared.hpp"
 #include "platform.hpp"
@@ -43,11 +43,11 @@ int main(int argc, char** argv) {
   std::unique_ptr<sf::FloeCryptor> cryptor;
   std::vector<ub1> bufInRaw;
   bufInRaw.resize(params.getEncryptedSegmentLength(), 0);
-  absl::Span<ub1> bufIn(bufInRaw);
+  std::span<ub1> bufIn(bufInRaw);
   std::vector<ub1> bufOutRaw;
   bufOutRaw.resize(params.getEncryptedSegmentLength(), 0);
-  absl::Span<ub1> bufOut(bufOutRaw);
-  const absl::Span<ub1> emptySpan;
+  std::span<ub1> bufOut(bufOutRaw);
+  const std::span<ub1> emptySpan;
   bool isEncrypting;
   if (strcmp(command, "encrypt") == 0) {
     isEncrypting = true;
@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
       std::cerr << "Error initializing encryptor: " << sf::floeErrorMessage(result) << std::endl;
       return -1;
     }
-    bufIn.remove_suffix(32);
+    bufIn = bufIn.first(bufIn.size() - 32);
     auto header = encryptor->getHeader();
     std::cout.write(reinterpret_cast<const char*>(header.data()), header.size());
     cryptor = std::move(encryptor);
@@ -68,13 +68,13 @@ int main(int argc, char** argv) {
       std::cerr << "Error initializing decryptor: " << sf::floeErrorMessage(result) << std::endl;
       return -1;
     }
-    bufOut.remove_suffix(32);
+    bufOut = bufOut.first(bufOut.size() - 32);
     cryptor = std::move(decryptor);
   }
 
   while (true) {
     std::cin.read(reinterpret_cast<char*>(bufIn.data()), cryptor->getInputSize());
-    auto bytesRead = std::cin.gcount();
+    size_t bytesRead = std::cin.gcount();
     size_t bytesWritten = 0;
     if (bytesRead != cryptor->getInputSize()) {
       // We're at the end

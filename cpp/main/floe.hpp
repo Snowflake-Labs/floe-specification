@@ -17,12 +17,13 @@
 
 #include <cassert>
 #include <cstddef>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
-#include "absl/types/span.h"
 #include "platform.hpp"
 
 namespace sf {
@@ -151,7 +152,7 @@ class FloeParameterSpec {
 // different segment lengths.) Immutable and threadsafe
 class FloeKey {
  public:
-  FloeKey(const absl::Span<const ub1>& key, const FloeParameterSpec& params) noexcept;
+  FloeKey(const std::span<const ub1>& key, const FloeParameterSpec& params) noexcept;
 
   // Move Constructor
   FloeKey(FloeKey&& other) = delete;
@@ -161,7 +162,7 @@ class FloeKey {
   ~FloeKey() noexcept;
   
   [[nodiscard]]
-  absl::Span<const ub1> getKey() const noexcept;
+  std::span<const ub1> getKey() const noexcept;
   [[nodiscard]]
   FloeParameterSpec getParameterSpec() const noexcept;
   [[nodiscard]]
@@ -174,7 +175,7 @@ class FloeKey {
 
   //  [[nodiscard]]
   //  FloeKey* derive(const std::vector<ub1>& iv, const std::vector<ub1>& aad, const
-  //  absl::Span<const ub1>& purpose,
+  //  std::span<const ub1>& purpose,
   //                  size_t purposeLength, size_t len) const noexcept;
   [[nodiscard]]
   std::unique_ptr<FloeKey> derive(const std::vector<ub1>& iv, const std::vector<ub1>& aad,
@@ -207,13 +208,13 @@ class FloeCryptor {
   // Process (encrypt/decrypt) a non-final segment.
   // See FloeEncryptor and FloeDecryptor for specific behavior.
   [[nodiscard]]
-  virtual FloeResult processSegment(const absl::Span<const ub1>& input,
-                                    absl::Span<ub1>& output) noexcept = 0;
+  virtual FloeResult processSegment(const std::span<const ub1>& input,
+                                    std::span<ub1>& output) noexcept = 0;
   // Process (encrypt/decrypt) a non-final segment.
   // See FloeEncryptor and FloeDecryptor for specific behavior.
   [[nodiscard]]
-  virtual FloeResult processLastSegment(const absl::Span<const ub1>& input,
-                                        absl::Span<ub1>& output) noexcept = 0;
+  virtual FloeResult processLastSegment(const std::span<const ub1>& input,
+                                        std::span<ub1>& output) noexcept = 0;
   // What is the output length in bytes of processLastSegment for an input of length
   // lastSegmentSize.
   [[nodiscard]]
@@ -249,7 +250,7 @@ class FloeCryptor {
 
   void useCurrentKey() noexcept;
 
-  void buildSegmentAad(bool last, absl::Span<ub1>& segmentAad) const noexcept;
+  void buildSegmentAad(bool last, std::span<ub1>& segmentAad) const noexcept;
   FloeParameterSpec m_params;
 
   ub8 m_counter = 0;
@@ -266,7 +267,7 @@ class FloeEncryptor : public FloeCryptor {
   // Factory for this object.
   // No references are kept to passed in data.
   static std::pair<FloeResult, std::unique_ptr<FloeEncryptor>> create(
-      const FloeKey&, const absl::Span<const ub1>& aad) noexcept;
+      const FloeKey&, const std::span<const ub1>& aad) noexcept;
   // No copy or move constructors
   FloeEncryptor(const FloeEncryptor&) = delete;
   FloeEncryptor(const FloeEncryptor&&) = delete;
@@ -276,7 +277,7 @@ class FloeEncryptor : public FloeCryptor {
   //  1. Prepended to the ciphertext
   //  2. Stored as metadata on the file containing the ciphertext
   [[nodiscard]]
-  absl::Span<const ub1> getHeader() const noexcept;
+  std::span<const ub1> getHeader() const noexcept;
   [[nodiscard]]
   size_t getInputSize() const noexcept override;
   [[nodiscard]]
@@ -285,19 +286,19 @@ class FloeEncryptor : public FloeCryptor {
   // (the size of a Plaintext Segment). The output will be `getOutputSize()` bytes
   // (the size of an Encrypted Segment).
   [[nodiscard]]
-  FloeResult processSegment(const absl::Span<const ub1>& input,
-                            absl::Span<ub1>& output) noexcept override;
+  FloeResult processSegment(const std::span<const ub1>& input,
+                            std::span<ub1>& output) noexcept override;
   // Encrypts the final segment. The length of `input` must be no more than `getInputSize()` bytes
   // (the size of a Plaintext Segment). The output size is defined as the result of
   // `sizeOfLastOutput()`. If this method returns successfully then it closes the FloeCryptor.
   [[nodiscard]]
-  FloeResult processLastSegment(const absl::Span<const ub1>& input,
-                                absl::Span<ub1>& output) noexcept override;
+  FloeResult processLastSegment(const std::span<const ub1>& input,
+                                std::span<ub1>& output) noexcept override;
   [[nodiscard]]
   size_t sizeOfLastOutput(size_t lastSegmentSize) const noexcept override;
 
  private:
-  FloeResult initialize(const FloeKey&, const absl::Span<const ub1>& aad) noexcept;
+  FloeResult initialize(const FloeKey&, const std::span<const ub1>& aad) noexcept;
   FloeEncryptor() = default;
   std::vector<ub1> m_header;
 };
@@ -309,8 +310,8 @@ class FloeDecryptor : public FloeCryptor {
   // Factory for this object.
   // No references are kept to passed in data.
   static std::pair<FloeResult, std::unique_ptr<FloeDecryptor>> create(
-      const FloeKey& key, const absl::Span<const ub1>& aad,
-      const absl::Span<const ub1>& header) noexcept;
+      const FloeKey& key, const std::span<const ub1>& aad,
+      const std::span<const ub1>& header) noexcept;
   // No copy or move constructors
   FloeDecryptor(const FloeDecryptor&) = delete;
   FloeDecryptor(const FloeDecryptor&&) = delete;
@@ -323,22 +324,22 @@ class FloeDecryptor : public FloeCryptor {
   // This method inspects the length header of each segment and if the input appears to be a final
   // segment it transparently calls `processLastSegment()` internally and acts identically to it.
   [[nodiscard]]
-  FloeResult processSegment(const absl::Span<const ub1>& input,
-                            absl::Span<ub1>& output) noexcept override;
+  FloeResult processSegment(const std::span<const ub1>& input,
+                            std::span<ub1>& output) noexcept override;
   // Decrypts the final segment. The length of `input` must be no more than `getInputSize()` bytes
   // (the size of an Encrypted Segment) and must be at least 4 + AEAD_IV_LENGTH + AEAD_TAG_LENGTH.
   // (For all currently defined AEADs, this gives a minimum length of 32 bytes.)
   // The output size is defined as the result of `sizeOfLastOutput()`.
   // If this method returns successfully then it closes the FloeCryptor.
   [[nodiscard]]
-  FloeResult processLastSegment(const absl::Span<const ub1>& input,
-                                absl::Span<ub1>& output) noexcept override;
+  FloeResult processLastSegment(const std::span<const ub1>& input,
+                                std::span<ub1>& output) noexcept override;
   [[nodiscard]]
   size_t sizeOfLastOutput(size_t lastSegmentSize) const noexcept override;
 
  private:
   FloeDecryptor() = default;
-  FloeResult initialize(const FloeKey& key, const absl::Span<const ub1>& aad,
-                        const absl::Span<const ub1>& header) noexcept;
+  FloeResult initialize(const FloeKey& key, const std::span<const ub1>& aad,
+                        const std::span<const ub1>& header) noexcept;
 };
 }  // namespace sf

@@ -23,10 +23,10 @@ using std::endl;
 
 namespace sf {
 const ub1* RAW_AAD = reinterpret_cast<const ub1*>("This is AAD");
-const absl::Span<const ub1> AAD(RAW_AAD, strlen(reinterpret_cast<const char*>(RAW_AAD)));
+const std::span<const ub1> AAD(RAW_AAD, strlen(reinterpret_cast<const char*>(RAW_AAD)));
 
 FloeResult decryptKat(std::string& testName, FloeParameterSpec param,
-                      const absl::Span<const ub1>& ct, std::vector<ub1>& out) {
+                      const std::span<const ub1>& ct, std::vector<ub1>& out) {
   std::vector<ub1> rawKey;
   // TODO: Fix this if we ever handle multiple rawKey lengths
   rawKey.resize(32, 0);
@@ -43,11 +43,11 @@ FloeResult decryptKat(std::string& testName, FloeParameterSpec param,
     if (offset + param.getEncryptedSegmentLength() >= ct.size()) {
       auto lastCtSegmentSize = ct.size() - offset;
       segment.resize(decryptor->sizeOfLastOutput(lastCtSegmentSize), 0);
-      absl::Span<ub1> segmentSpan(segment);
+      std::span<ub1> segmentSpan(segment);
       CHECK_RETURN_NAME(testName, decryptor->processLastSegment(ct.subspan(offset), segmentSpan));
     } else {
       segment.resize(param.getPlaintextSegmentLength());
-      absl::Span<ub1> segmentSpan(segment);
+      std::span<ub1> segmentSpan(segment);
 
       CHECK_RETURN_NAME(
           testName, decryptor->processSegment(ct.subspan(offset, param.getEncryptedSegmentLength()),
@@ -73,7 +73,7 @@ FloeResult encryptKat(std::string& testName, FloeParameterSpec param, size_t seg
   static std::default_random_engine generator;  // This is not secure but doesn't matter
 
   std::generate(pt.begin(), pt.end(), []() { return distribution(generator); });
-  absl::Span<const ub1> ptSpan(pt);
+  std::span<const ub1> ptSpan(pt);
 
   auto [result, encryptor] = FloeEncryptor::create(key, AAD);
   CHECK_RETURN_NAME(testName, result);
@@ -84,12 +84,12 @@ FloeResult encryptKat(std::string& testName, FloeParameterSpec param, size_t seg
     if (offset + param.getPlaintextSegmentLength() >= pt.size()) {
       size_t lastPtSegmentLength = pt.size() - offset;
       segment.resize(encryptor->sizeOfLastOutput(lastPtSegmentLength), 0);
-      absl::Span<ub1> segmentSpan(segment);
+      std::span<ub1> segmentSpan(segment);
       CHECK_RETURN_NAME(testName,
                         encryptor->processLastSegment(ptSpan.subspan(offset), segmentSpan));
     } else {
       segment.resize(param.getEncryptedSegmentLength(), 0);
-      absl::Span<ub1> segmentSpan(segment);
+      std::span<ub1> segmentSpan(segment);
       CHECK_RETURN_NAME(
           testName, encryptor->processSegment(
                         ptSpan.subspan(offset, param.getPlaintextSegmentLength()), segmentSpan));
