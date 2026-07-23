@@ -1,0 +1,30 @@
+[package]
+name="floe"
+version="0.10.0"
+license="Apache-2.0"
+edition = '2024'
+
+[lib]
+name="floe"
+path="floe/src/lib.rs"
+
+[features]
+default = ["getrandom"]
+getrandom = []
+
+[dependencies]
+aead = { version = "0.5.2", default-features = false }
+aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "zeroize"] }
+sha2 = "0.10.8"
+rand = "0.10.0"
+hmac = "0.12.1"
+subtle = "2.6"
+zeroize = { version = "1.8.2", features = ["zeroize_derive"] }
+
+[dev-dependencies]
+# Test dependencies
+hex = "0.4.3"
+
+# Benchmark dependencies
+dhat = "0.3.3"
+criterion = { version = "0.3", features = [ "html_reports" ]}

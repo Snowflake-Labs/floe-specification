@@ -13,29 +13,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy")
+# load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy")
 
-rust_binary(
-    name = "bench",
-    srcs = glob(["src/**/*.rs"]),
-    crate_name = "floe_bench",
-    env = {
-        "RUST_BACKTRACE": "FULL",
-    },
-    visibility = ["//visibility:public"],
-    deps = [
-        "//rust/floe",
-        "@crates//:aead",
-        "@crates//:aes-gcm",
-        "@crates//:criterion",
-        "@crates//:dhat",
-        "@crates//:rand",
-    ],
-)
+# rust_binary(
+#     name = "bench",
+#     srcs = glob(["src/**/*.rs"]),
+#     crate_name = "floe_bench",
+#     env = {
+#         "RUST_BACKTRACE": "FULL",
+#     },
+#     visibility = ["//visibility:public"],
+#     deps = [
+#         "//rust/floe",
+#         "@crates//:aead",
+#         "@crates//:aes-gcm",
+#         "@crates//:criterion",
+#         "@crates//:dhat",
+#         "@crates//:rand",
+#     ],
+# )
 
-rust_clippy(
-    name = "bench_clippy",
-    deps = [
-        ":bench",
-    ],
-)
+# rust_clippy(
+#     name = "bench_clippy",
+#     deps = [
+#         ":bench",
+#     ],
+# )
