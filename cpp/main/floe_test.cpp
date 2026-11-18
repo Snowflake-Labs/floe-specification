@@ -39,10 +39,10 @@ const std::vector<ub1> HEADER_RAW = hex_to_string(HEADER_HEX, strlen(HEADER_HEX)
 const std::vector<ub1> SEGMENT1_RAW = hex_to_string(SEGMENT1_HEX, strlen(HEADER_HEX));
 const std::vector<ub1> SEGMENT2_RAW = hex_to_string(SEGMENT2_HEX, strlen(HEADER_HEX));
 const std::vector<ub1> SEGMENT3_RAW = hex_to_string(SEGMENT3_HEX, strlen(HEADER_HEX));
-const absl::Span<const ub1> HEADER(HEADER_RAW);
-const absl::Span<const ub1> SEGMENT1(SEGMENT1_RAW);
-const absl::Span<const ub1> SEGMENT2(SEGMENT2_RAW);
-const absl::Span<const ub1> SEGMENT3(SEGMENT3_RAW);
+const std::span<const ub1> HEADER(HEADER_RAW);
+const std::span<const ub1> SEGMENT1(SEGMENT1_RAW);
+const std::span<const ub1> SEGMENT2(SEGMENT2_RAW);
+const std::span<const ub1> SEGMENT3(SEGMENT3_RAW);
 constexpr ub1 RAW_KEY[32] = {0};
 const FloeKey KEY(RAW_KEY, PARAMS);
 
@@ -76,7 +76,7 @@ FloeResult headerWithBadParams() {
 
 FloeResult headerWithBadIvOrTag() {
   std::vector<ub1> localHeader(HEADER.begin(), HEADER.end());
-  for (int x = 10; x < localHeader.size(); x++) {
+  for (size_t x = 10; x < localHeader.size(); x++) {
     localHeader[x] ^= 0x01;
     auto [result, decryptor] = FloeDecryptor::create(KEY, AAD, localHeader);
     EXPECT_ERROR(result, FloeResult::BadTag);
@@ -101,7 +101,7 @@ FloeResult missingFinalSegmentIsTruncated() {
   CHECK_RETURN(result);
   std::vector<ub1> outVec;
   outVec.resize(KEY.getParameterSpec().getPlaintextSegmentLength(), 0);
-  absl::Span<ub1> out(outVec);
+  std::span<ub1> out(outVec);
   CHECK_RETURN(decryptor->processSegment(SEGMENT1, out));
   EXPECT_ERROR(decryptor->finish(), FloeResult::Truncated);
   CHECK_BOOL(!decryptor->isClosed());
@@ -116,11 +116,11 @@ FloeResult corruptedInnerSegment() {
   std::vector<ub1> outVec;
 
   outVec.resize(KEY.getParameterSpec().getPlaintextSegmentLength(), 0);
-  absl::Span<ub1> out(outVec);
+  std::span<ub1> out(outVec);
 
   // First four bytes are special as they are the non-terminal indicator
   std::vector<ub1> localSegment = SEGMENT1_RAW;
-  for (int x = 0; x < localSegment.size(); x++) {
+  for (size_t x = 0; x < localSegment.size(); x++) {
     localSegment[x] ^= 0x01;
     FloeResult expectedError = x < 4 ? FloeResult::MalformedSegment : FloeResult::BadTag;
     EXPECT_ERROR(decryptor->processSegment(localSegment, out), expectedError);
@@ -136,7 +136,7 @@ FloeResult corruptedFinalSegment() {
   CHECK_RETURN(result);
   std::vector<ub1> outVec;
   outVec.resize(KEY.getParameterSpec().getPlaintextSegmentLength(), 0);
-  absl::Span<ub1> out(outVec);
+  std::span<ub1> out(outVec);
 
   CHECK_RETURN(decryptor->processSegment(SEGMENT1, out));
   CHECK_RETURN(decryptor->processSegment(SEGMENT2, out));
@@ -144,7 +144,7 @@ FloeResult corruptedFinalSegment() {
   std::vector<ub1> localSegment = SEGMENT3_RAW;
 
   // First four bytes are special as they are the length indicator
-  for (int x = 0; x < localSegment.size(); x++) {
+  for (size_t x = 0; x < localSegment.size(); x++) {
     localSegment[x] ^= 0x01;
     FloeResult expectedError = x < 4 ? FloeResult::MalformedSegment : FloeResult::BadTag;
     EXPECT_ERROR(decryptor->processLastSegment(localSegment, out), expectedError);
@@ -162,11 +162,11 @@ FloeResult cannotUseAfterClose() {
   auto header = encryptor->getHeader();
   std::vector<ub1> scratch;
   scratch.resize(PARAMS.getEncryptedSegmentLength(), 0);
-  absl::Span<ub1> scratchSpan;
+  std::span<ub1> scratchSpan;
   std::vector<ub1> segment;
   segment.resize(encryptor->sizeOfLastOutput(0));
-  absl::Span<ub1> segmentSpan(segment);
-  absl::Span<ub1> empty;
+  std::span<ub1> segmentSpan(segment);
+  std::span<ub1> empty;
   CHECK_RETURN(encryptor->processLastSegment(empty, segmentSpan));
   CHECK_BOOL(encryptor->isClosed());
 

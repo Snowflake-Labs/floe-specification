@@ -75,7 +75,7 @@ const EVP_CIPHER* getOsslCipher(FloeAead aead) noexcept {
   return EVP_aes_256_gcm();
 }
 
-void i2be(ub8 val, absl::Span<ub1> out) {
+void i2be(ub8 val, std::span<ub1> out) {
   out[0] = (val >> 56) & 0xFF;
   out[1] = (val >> 48) & 0xFF;
   out[2] = (val >> 40) & 0xFF;
@@ -86,14 +86,14 @@ void i2be(ub8 val, absl::Span<ub1> out) {
   out[7] = val & 0xFF;
 }
 
-void i2be(ub4 val, absl::Span<ub1> out) {
+void i2be(ub4 val, std::span<ub1> out) {
   out[0] = (val >> 24) & 0xFF;
   out[1] = (val >> 16) & 0xFF;
   out[2] = (val >> 8) & 0xFF;
   out[3] = val & 0xFF;
 }
 
-ub4 be2i4(absl::Span<const ub1> arr) {
+ub4 be2i4(std::span<const ub1> arr) {
   ub4 result = 0;
   result |= arr[0] << 24;
   result |= arr[1] << 16;
@@ -127,9 +127,9 @@ void params2Mac(const FloeParameterSpec& params, EVP_MAC** mac, OSSL_PARAM* macP
 }
 
 // Equivalent to `&span[offset]` except that it also works when `offset` is equal to `span.size()`.
-ub1* offsetOrEnd(const absl::Span<ub1> span, size_t offset) {
+ub1* offsetOrEnd(const std::span<ub1> span, size_t offset) {
   if (span.size() == offset) {
-    return span.end();
+    return span.data() + offset;
   } else {
     return &span[offset];
   }
@@ -139,8 +139,8 @@ ub1* offsetOrEnd(const absl::Span<ub1> span, size_t offset) {
 class FloePurpose {
  public:
   explicit FloePurpose(const char* str) : m_span{reinterpret_cast<const ub1*>(str), strlen(str)} {}
-  explicit FloePurpose(absl::Span<ub1> span) : m_span{span} {}
-  absl::Span<const ub1> m_span;
+  explicit FloePurpose(std::span<ub1> span) : m_span{span} {}
+  std::span<const ub1> m_span;
 };
 
 // The 8 hashes are saving space for a 64-bit integer
@@ -182,11 +182,11 @@ class AeadCryptor {
 
   void setKey(const FloeKey& key) noexcept;
 
-  FloeResult encrypt(const absl::Span<const ub1>& in, absl::Span<ub1>& out, size_t* outLen,
-                     const absl::Span<const ub1>& aad) noexcept;
+  FloeResult encrypt(const std::span<const ub1>& in, std::span<ub1>& out, size_t* outLen,
+                     const std::span<const ub1>& aad) noexcept;
 
-  FloeResult decrypt(const absl::Span<const ub1>& in, absl::Span<ub1>& out, size_t* outLen,
-                     const absl::Span<const ub1>& aad) noexcept;
+  FloeResult decrypt(const std::span<const ub1>& in, std::span<ub1>& out, size_t* outLen,
+                     const std::span<const ub1>& aad) noexcept;
 
  private:
   FloeParameterSpec m_params;
@@ -278,7 +278,7 @@ class FloeKeyPrivateState {
     m_macParams[0] = other.m_macParams[0];
     m_macParams[1] = OSSL_PARAM_END;
   }
-  FloeKeyPrivateState(const absl::Span<const ub1> key, const FloeParameterSpec& params)
+  FloeKeyPrivateState(const std::span<const ub1> key, const FloeParameterSpec& params)
       : m_params{params} {
     m_key.insert(m_key.end(), key.begin(), key.end());
     params2Mac(params, &this->m_mac, this->m_macParams);
@@ -307,8 +307,8 @@ void AeadCryptor::setKey(const FloeKey& key) noexcept {
   EVP_CipherInit_ex2(m_evpCtx, nullptr, key.getKey().data(), nullptr, CIPHER_MODE_UNCHANGED,
                      nullptr);
 }
-FloeResult AeadCryptor::encrypt(const absl::Span<const ub1>& in, absl::Span<ub1>& out,
-                                size_t* outLen, const absl::Span<const ub1>& aad) noexcept {
+FloeResult AeadCryptor::encrypt(const std::span<const ub1>& in, std::span<ub1>& out,
+                                size_t* outLen, const std::span<const ub1>& aad) noexcept {
   const size_t nonceLength = getNonceLength(m_params.getAead());
   const size_t tagLength = getTagLength(m_params.getAead());
   size_t neededLength = nonceLength + in.size() + tagLength;
@@ -367,8 +367,8 @@ FloeResult AeadCryptor::encrypt(const absl::Span<const ub1>& in, absl::Span<ub1>
   return FloeResult::Success;
 }
 
-FloeResult AeadCryptor::decrypt(const absl::Span<const ub1>& in, absl::Span<ub1>& out,
-                                size_t* outLen, const absl::Span<const ub1>& aad) noexcept {
+FloeResult AeadCryptor::decrypt(const std::span<const ub1>& in, std::span<ub1>& out,
+                                size_t* outLen, const std::span<const ub1>& aad) noexcept {
   const size_t nonceLength = getNonceLength(m_params.getAead());
   const size_t tagLength = getTagLength(m_params.getAead());
   size_t neededLength = in.size() - nonceLength - tagLength;
@@ -420,7 +420,7 @@ ub8 FloeParameterSpec::getRotationMask() const noexcept {
 
 // FloeKey
 
-FloeKey::FloeKey(const absl::Span<const ub1>& key, const FloeParameterSpec& params) noexcept {
+FloeKey::FloeKey(const std::span<const ub1>& key, const FloeParameterSpec& params) noexcept {
   m_state = std::make_unique<FloeKeyPrivateState>(key, params);
 }
 
@@ -428,7 +428,7 @@ FloeKey::~FloeKey() noexcept {
   // NOP
 }
 
-absl::Span<const ub1> FloeKey::getKey() const noexcept { return {this->m_state->m_key}; }
+std::span<const ub1> FloeKey::getKey() const noexcept { return {this->m_state->m_key}; }
 
 FloeParameterSpec FloeKey::getParameterSpec() const noexcept { return this->m_state->m_params; }
 
@@ -458,7 +458,7 @@ std::unique_ptr<FloeKey> FloeKey::derive(const std::vector<ub1>& iv, const std::
   assert(EVP_MAC_final(ctx, buf, &out_len, sizeof(buf)));
   assert(out_len >= len);
 
-  auto result = std::make_unique<FloeKey>(absl::Span<const ub1>(buf, len), *params);
+  auto result = std::make_unique<FloeKey>(std::span<const ub1>(buf, len), *params);
   OPENSSL_cleanse(buf, sizeof(buf));
   EVP_MAC_CTX_free(ctx);
   return result;
@@ -468,7 +468,7 @@ std::vector<ub1> FloeParameterSpec::encodeHeader() const noexcept {
   std::vector<ub1> result;
   result.reserve(10);
   ub1 rawScratch[] = {0, 0, 0, 0};
-  absl::Span<ub1> ub4Scratch(rawScratch);
+  std::span<ub1> ub4Scratch(rawScratch);
 
   result.push_back(getFloeId(m_aead));
   result.push_back(getFloeId(m_hash));
@@ -499,7 +499,7 @@ void FloeCryptor::cryptorInitialize(const std::vector<ub1>& iv, const std::vecto
   m_messageKey = std::move(key);
   m_aeadCryptor = std::make_unique<AeadCryptor>(m_params);
 }
-void FloeCryptor::buildSegmentAad(bool last, absl::Span<ub1>& segmentAad) const noexcept {
+void FloeCryptor::buildSegmentAad(bool last, std::span<ub1>& segmentAad) const noexcept {
   i2be(m_counter, segmentAad);
   segmentAad[8] = last ? 1 : 0;
 }
@@ -509,7 +509,7 @@ std::unique_ptr<FloeKey> FloeCryptor::deriveSegmentKey() const noexcept {
   const ub8 maskedSegmentNumber = m_counter & mask;
 
   std::vector<ub1> mergedPurposeRaw(PURPOSE_DEK.m_span.begin(), PURPOSE_DEK.m_span.end());
-  absl::Span<ub1> mergedPurpose(mergedPurposeRaw);
+  std::span<ub1> mergedPurpose(mergedPurposeRaw);
   i2be(maskedSegmentNumber, mergedPurpose.subspan(PURPOSE_DEK_CTR_OFFSET));
 
   return m_messageKey->derive(m_floeIv, m_aad, FloePurpose(mergedPurpose),
@@ -529,7 +529,7 @@ void FloeCryptor::useCurrentKey() noexcept {
 // FloeEncryptor
 
 std::pair<FloeResult, std::unique_ptr<FloeEncryptor>> FloeEncryptor::create(
-    const FloeKey& key, const absl::Span<const ub1>& aad) noexcept {
+    const FloeKey& key, const std::span<const ub1>& aad) noexcept {
   auto encryptor = std::unique_ptr<FloeEncryptor>(new FloeEncryptor());
   auto result = encryptor->initialize(key, aad);
   if (result != FloeResult::Success) {
@@ -539,10 +539,10 @@ std::pair<FloeResult, std::unique_ptr<FloeEncryptor>> FloeEncryptor::create(
   }
 }
 
-absl::Span<const ub1> FloeEncryptor::getHeader() const noexcept { return m_header; }
+std::span<const ub1> FloeEncryptor::getHeader() const noexcept { return m_header; }
 
-FloeResult FloeEncryptor::processSegment(const absl::Span<const ub1>& input,
-                                         absl::Span<ub1>& output) noexcept {
+FloeResult FloeEncryptor::processSegment(const std::span<const ub1>& input,
+                                         std::span<ub1>& output) noexcept {
   if (m_messageKey == nullptr) {
     return FloeResult::NotInitialized;
   }
@@ -568,7 +568,7 @@ FloeResult FloeEncryptor::processSegment(const absl::Span<const ub1>& input,
   // aead_iv = RND(AEAD_IV_LEN) is implicit in the encryption
   // aead_aad = I2BE(State.Counter, 8) || 0x00
   ub1 rawSegmentAad[SEGMENT_AAD_SIZE];
-  absl::Span<ub1> segmentAad(rawSegmentAad);
+  std::span<ub1> segmentAad(rawSegmentAad);
   buildSegmentAad(false, segmentAad);
   size_t outputSize = getOutputSize() - SEGMENT_LENGTH_PREFIX;
   auto ctSpan = output.subspan(SEGMENT_LENGTH_PREFIX);
@@ -582,8 +582,8 @@ FloeResult FloeEncryptor::processSegment(const absl::Span<const ub1>& input,
   return FloeResult::Success;
 }
 
-FloeResult FloeEncryptor::processLastSegment(const absl::Span<const ub1>& input,
-                                             absl::Span<ub1>& output) noexcept {
+FloeResult FloeEncryptor::processLastSegment(const std::span<const ub1>& input,
+                                             std::span<ub1>& output) noexcept {
   if (m_messageKey == nullptr) {
     return FloeResult::NotInitialized;
   }
@@ -607,7 +607,7 @@ FloeResult FloeEncryptor::processLastSegment(const absl::Span<const ub1>& input,
   // aead_iv = RND(AEAD_IV_LEN) is implicit in the encryption
   // aead_aad = I2BE(State.Counter, 8) || 0x01
   ub1 rawSegmentAad[SEGMENT_AAD_SIZE];
-  absl::Span<ub1> segmentAad(rawSegmentAad);
+  std::span<ub1> segmentAad(rawSegmentAad);
   buildSegmentAad(true, segmentAad);
   size_t ciphertextSize = outputSize - SEGMENT_LENGTH_PREFIX;
   auto ctSpan = output.subspan(SEGMENT_LENGTH_PREFIX);
@@ -627,7 +627,7 @@ size_t FloeEncryptor::sizeOfLastOutput(size_t lastSegmentSize) const noexcept {
 }
 
 FloeResult FloeEncryptor::initialize(const FloeKey& key,
-                                     const absl::Span<const ub1>& aad) noexcept {
+                                     const std::span<const ub1>& aad) noexcept {
   if (!key.isValid()) {
     return FloeResult::InvalidInput;
   }
@@ -673,8 +673,8 @@ size_t FloeDecryptor::sizeOfLastOutput(size_t lastSegmentSize) const noexcept {
 }
 
 std::pair<FloeResult, std::unique_ptr<FloeDecryptor>> FloeDecryptor::create(
-    const FloeKey& key, const absl::Span<const ub1>& aad,
-    const absl::Span<const ub1>& header) noexcept {
+    const FloeKey& key, const std::span<const ub1>& aad,
+    const std::span<const ub1>& header) noexcept {
   auto decryptor = std::unique_ptr<FloeDecryptor>(new FloeDecryptor());
   auto result = decryptor->initialize(key, aad, header);
   if (result != FloeResult::Success) {
@@ -684,8 +684,8 @@ std::pair<FloeResult, std::unique_ptr<FloeDecryptor>> FloeDecryptor::create(
   }
 }
 
-FloeResult FloeDecryptor::initialize(const sf::FloeKey& key, const absl::Span<const ub1>& aad,
-                                     const absl::Span<const ub1>& header) noexcept {
+FloeResult FloeDecryptor::initialize(const sf::FloeKey& key, const std::span<const ub1>& aad,
+                                     const std::span<const ub1>& header) noexcept {
   if (!key.isValid()) {
     return FloeResult::InvalidInput;
   }
@@ -717,8 +717,8 @@ FloeResult FloeDecryptor::initialize(const sf::FloeKey& key, const absl::Span<co
   return FloeResult::Success;
 }
 
-FloeResult FloeDecryptor::processSegment(const absl::Span<const ub1>& input,
-                                         absl::Span<ub1>& output) noexcept {
+FloeResult FloeDecryptor::processSegment(const std::span<const ub1>& input,
+                                         std::span<ub1>& output) noexcept {
   if (m_messageKey == nullptr) {
     return FloeResult::NotInitialized;
   }
@@ -753,7 +753,7 @@ FloeResult FloeDecryptor::processSegment(const absl::Span<const ub1>& input,
   useCurrentKey();
 
   ub1 rawSegmentAad[SEGMENT_AAD_SIZE];
-  absl::Span<ub1> segmentAad(rawSegmentAad);
+  std::span<ub1> segmentAad(rawSegmentAad);
   buildSegmentAad(false, segmentAad);
 
   size_t outputSize = getOutputSize();
@@ -766,8 +766,8 @@ FloeResult FloeDecryptor::processSegment(const absl::Span<const ub1>& input,
   return FloeResult::Success;
 }
 
-FloeResult FloeDecryptor::processLastSegment(const absl::Span<const ub1>& input,
-                                             absl::Span<ub1>& output) noexcept {
+FloeResult FloeDecryptor::processLastSegment(const std::span<const ub1>& input,
+                                             std::span<ub1>& output) noexcept {
   if (m_messageKey == nullptr) {
     return FloeResult::NotInitialized;
   }
@@ -795,7 +795,7 @@ FloeResult FloeDecryptor::processLastSegment(const absl::Span<const ub1>& input,
   useCurrentKey();
 
   ub1 rawSegmentAad[SEGMENT_AAD_SIZE];
-  absl::Span<ub1> segmentAad(rawSegmentAad);
+  std::span<ub1> segmentAad(rawSegmentAad);
   buildSegmentAad(true, segmentAad);
   size_t ciphertextSize = sizeOfLastOutput(input.size());
   FloeResult result = m_aeadCryptor->decrypt(input.subspan(SEGMENT_LENGTH_PREFIX), output,

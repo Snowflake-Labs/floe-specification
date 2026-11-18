@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#import "floe_test_shared.hpp"
+#include "floe_test_shared.hpp"
 
 namespace sf {
 namespace {
@@ -22,7 +22,7 @@ FloeResult testBounce(std::string testName, FloeParameterSpec params, size_t seg
   std::vector<ub1> ciphertext;
   CHECK_RETURN_NAME(testName, encryptKat(testName, params, segCount, plaintext, ciphertext));
   std::vector<ub1> decrypted;
-  absl::Span<const ub1> ctSpan(ciphertext);
+  std::span<const ub1> ctSpan(ciphertext);
   CHECK_RETURN_NAME(testName, decryptKat(testName, params, ctSpan, decrypted));
   if (decrypted != plaintext) {
     std::cout << "\x1b[31;1mFAIL\x1b[0m: Test " << testName << " failed due to plaintext mismatch"

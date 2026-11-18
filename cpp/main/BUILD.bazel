@@ -23,7 +23,6 @@ cc_library(
         "platform.hpp",
     ],
     deps = [
-        "@abseil-cpp//absl/types:span",
         "@openssl//:crypto",
     ],
 )
