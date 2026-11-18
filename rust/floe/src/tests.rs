@@ -13,13 +13,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use rand::TryRng;
+use rand::rngs::SysRng;
 use std::{fs::OpenOptions, io::Write};
 
-use aead::{OsRng, rand_core::RngCore};
-
 use crate::{
-    Error, FloeAead, FloeCryptor, FloeDecryptor, FloeEncryptor, FloeHash, FloeKey,
-    FloeParameterSpec, GCM256_IV256_1M, GCM256_IV256_4K, Result,
+    Error, FloeAead, FloeKdf, FloeKey, FloeParameterSpec, FloeSequentialCryptor,
+    FloeSequentialDecryptor, FloeSequentialEncryptor, GCM256_IV256_1M, GCM256_IV256_4K, Result,
 };
 
 const AAD: &[u8] = b"This is AAD";
@@ -30,15 +30,17 @@ fn encrypt_random(
     random_key: bool,
 ) -> Result<(Vec<u8>, Vec<u8>, FloeKey)> {
     let mut pt = vec![0u8; len];
-    OsRng.fill_bytes(&mut pt);
+    SysRng.try_fill_bytes(&mut pt)?;
 
     let key = if random_key {
-        FloeKey::new_random(params)?
+        let mut raw_key = [0u8; 32];
+        SysRng.try_fill_bytes(&mut raw_key)?;
+        FloeKey::new(&raw_key, params)?
     } else {
         FloeKey::new(&[0u8; 32], params)?
     };
 
-    let mut encryptor = FloeEncryptor::new(&key, AAD)?;
+    let mut encryptor = FloeSequentialEncryptor::new(&key, AAD)?;
 
     let mut ct = encryptor.get_header().to_vec();
     let mut ct_segment = vec![0u8; encryptor.get_output_size()];
@@ -52,7 +54,8 @@ fn encrypt_random(
         }
     }
     if !encryptor.is_closed() {
-        encryptor.process_last_segment(&[], &mut ct_segment)?;
+        encryptor
+            .process_last_segment(&[], &mut ct_segment[..encryptor.size_of_last_output(0)?])?;
         ct.extend(&ct_segment[..encryptor.size_of_last_output(0)?]);
     }
     encryptor.finish()?;
@@ -60,7 +63,8 @@ fn encrypt_random(
 }
 
 fn decrypt_kat(key: &FloeKey, pt: &[u8], ct: &[u8]) -> Result<()> {
-    let mut decryptor = FloeDecryptor::new(key, AAD, ct)?;
+    let mut decryptor =
+        FloeSequentialDecryptor::new(key, AAD, &ct[..key.get_parameters().get_header_length()])?;
 
     let mut decrypted = vec![];
     let mut pt_segment = vec![0u8; decryptor.get_output_size()];
@@ -71,7 +75,10 @@ fn decrypt_kat(key: &FloeKey, pt: &[u8], ct: &[u8]) -> Result<()> {
             decryptor.process_segment(segment, &mut pt_segment)?;
             decrypted.extend(&pt_segment);
         } else {
-            decryptor.process_last_segment(segment, &mut pt_segment)?;
+            decryptor.process_last_segment(
+                segment,
+                &mut pt_segment[..decryptor.size_of_last_output(segment.len())?],
+            )?;
             decrypted.extend(&pt_segment[..decryptor.size_of_last_output(segment.len())?]);
         }
     }
@@ -83,9 +90,7 @@ fn decrypt_kat(key: &FloeKey, pt: &[u8], ct: &[u8]) -> Result<()> {
 const KAT_LOCATION: &str = "kats";
 
 fn read_hex_file(file_name: &str) -> Result<Vec<u8>> {
-    std::fs::read_to_string(file_name)
-        .map_err(Error::internal)
-        .map(|s| hex::decode(s.trim()).map_err(Error::internal))?
+    Ok(hex::decode(std::fs::read_to_string(file_name)?.trim())?)
 }
 
 #[test]
@@ -112,10 +117,15 @@ fn test_kat(params: FloeParameterSpec, p_name: &str, name: &str) -> Result<()> {
 #[test]
 #[ignore = "generate new KATs"]
 fn generate_kats() -> Result<()> {
-    let p64 = FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, 64)?;
+    let p64 = FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, 64)?;
 
-    let rotation =
-        FloeParameterSpec::new_explicit(FloeAead::AesGcm256, FloeHash::Sha384, 40, 32, Some(-4));
+    let rotation = FloeParameterSpec::new_explicit(
+        FloeAead::AesGcm256,
+        FloeKdf::HkdfExpandSha384,
+        40,
+        32,
+        Some(-4),
+    );
 
     for p in [GCM256_IV256_4K, GCM256_IV256_1M, p64, rotation] {
         let p_name = if p == GCM256_IV256_4K {
@@ -139,30 +149,31 @@ fn generate_kats() -> Result<()> {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(file_name)
-            .map_err(Error::internal)?;
-        file.write_all(hex::encode(pt).as_bytes())
-            .map_err(Error::internal)?;
+            .open(file_name)?;
+        file.write_all(hex::encode(pt).as_bytes())?;
 
         let file_name = format!("{}/rust_{}_ct.txt", KAT_LOCATION, p_name);
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .open(file_name)
-            .map_err(Error::internal)?;
-        file.write_all(hex::encode(ct).as_bytes())
-            .map_err(Error::internal)?;
+            .open(file_name)?;
+        file.write_all(hex::encode(ct).as_bytes())?;
     }
     Ok(())
 }
 
 #[test]
 fn kats() -> Result<()> {
-    let p64 = FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, 64)?;
+    let p64 = FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, 64)?;
 
-    let rotation =
-        FloeParameterSpec::new_explicit(FloeAead::AesGcm256, FloeHash::Sha384, 40, 32, Some(-4));
+    let rotation = FloeParameterSpec::new_explicit(
+        FloeAead::AesGcm256,
+        FloeKdf::HkdfExpandSha384,
+        40,
+        32,
+        Some(-4),
+    );
 
     for source in ["java", "go", "pub_java", "rust"] {
         for p in [GCM256_IV256_4K, GCM256_IV256_1M, p64, rotation] {
@@ -182,7 +193,8 @@ fn kats() -> Result<()> {
     }
 
     // There are a few Java generated only KATs
-    let segment_test_params = FloeParameterSpec::new(FloeAead::AesGcm256, FloeHash::Sha384, 40)?;
+    let segment_test_params =
+        FloeParameterSpec::new(FloeAead::AesGcm256, FloeKdf::HkdfExpandSha384, 40)?;
     test_kat(segment_test_params, "lastSegAligned", "java")?;
     test_kat(segment_test_params, "lastSegEmpty", "java")?;
     Ok(())
@@ -193,4 +205,17 @@ fn invalid_key_length() -> Result<()> {
     let key = FloeKey::new(&[0u8; 33], GCM256_IV256_1M);
     assert!(key.is_err());
     Ok(())
+}
+
+// Some useful additional traits for errors we can only see during testing
+impl From<std::io::Error> for Error {
+    fn from(_: std::io::Error) -> Self {
+        Error::UnexpectedDependencyError
+    }
+}
+
+impl From<hex::FromHexError> for Error {
+    fn from(_: hex::FromHexError) -> Self {
+        Error::UnexpectedDependencyError
+    }
 }

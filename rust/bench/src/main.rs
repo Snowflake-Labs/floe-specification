@@ -21,7 +21,7 @@ use criterion::profiler::Profiler;
 
 use std::{time::Duration, alloc::{GlobalAlloc, System}, sync::atomic::{AtomicUsize, Ordering}};
 
-use rand::rngs::{OsRng};
+use rand::rngs::SysRng;
 use rand::TryRngCore;
 
 use aead::{Aead, Payload, KeyInit};
@@ -35,10 +35,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let _run_time = Duration::from_secs(30);
     
     let mut aad = vec![0u8; 32];
-    OsRng.try_fill_bytes(&mut aad).unwrap();
+    SysRng.try_fill_bytes(&mut aad).unwrap();
     let key = FloeKey::new_random(GCM256_IV256_4K).unwrap();
     let mut raw_gcm_key = vec![0u8; 32];
-    OsRng.try_fill_bytes(&mut raw_gcm_key).unwrap();
+    SysRng.try_fill_bytes(&mut raw_gcm_key).unwrap();
     let gcm_key = Aes256Gcm::new_from_slice(&raw_gcm_key).unwrap();
     // let pt_lengths = [1024_usize, 2048, 4096, 8192, 1024*16, 1024*128, 1024*1024, 1024*1024*2, 1024*1024*16];
     let pt_lengths = [1024_usize*1024*16];
@@ -46,7 +46,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     // group.measurement_time(_run_time);
     for pt_len in pt_lengths {
         let mut pt = vec![0u8; pt_len];
-        OsRng.try_fill_bytes(&mut pt).unwrap();
+        SysRng.try_fill_bytes(&mut pt).unwrap();
         group.throughput(Throughput::Bytes(pt_len as u64));
         let ct = floe_encrypt(&pt, &aad, &key).unwrap();
         group.bench_function(format!("Encrypt {}", pt_len), |b| b.iter(|| floe_encrypt(&pt, &aad, &key)));
@@ -58,7 +58,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     // gcm_group.measurement_time(_run_time);
     for pt_len in pt_lengths {
         let mut pt = vec![0u8; pt_len];
-        OsRng.try_fill_bytes(&mut pt).unwrap();
+        SysRng.try_fill_bytes(&mut pt).unwrap();
         gcm_group.throughput(Throughput::Bytes(pt_len as u64));
         let ct = gcm_encrypt(&pt, &aad, &gcm_key).unwrap();
         gcm_group.bench_function(format!("Encrypt {}", pt_len), |b| b.iter(|| gcm_encrypt(&pt, &aad, &gcm_key)));
@@ -72,17 +72,17 @@ pub fn heap_benchmark(c: &mut Criterion) {
     let _run_time = Duration::from_secs(30);
     
     let mut aad = vec![0u8; 32];
-    OsRng.try_fill_bytes(&mut aad).unwrap();
+    SysRng.try_fill_bytes(&mut aad).unwrap();
     let key = FloeKey::new_random(GCM256_IV256_4K).unwrap();
     let mut raw_gcm_key = vec![0u8; 32];
-    OsRng.try_fill_bytes(&mut raw_gcm_key).unwrap();
+    SysRng.try_fill_bytes(&mut raw_gcm_key).unwrap();
     let gcm_key = Aes256Gcm::new_from_slice(&raw_gcm_key).unwrap();
     let pt_lengths = [1024_usize]; //, 2048, 4096, 8192, ];// 1024*16, 1024*128, 1024*1024]; //, 1024*1024*2, 1024*1024*16];
     // group.warm_up_time(_run_time);
     // group.measurement_time(_run_time);
     for pt_len in pt_lengths {
         let mut pt = vec![0u8; pt_len];
-        OsRng.try_fill_bytes(&mut pt).unwrap();
+        SysRng.try_fill_bytes(&mut pt).unwrap();
         // group.throughput(Throughput::Bytes(pt_len as u64));
         let ct = floe_encrypt(&pt, &aad, &key).unwrap();
         group.bench_function(format!("Encrypt {}", pt_len), |b| b.iter(|| floe_encrypt(&pt, &aad, &key)));
@@ -94,7 +94,7 @@ pub fn heap_benchmark(c: &mut Criterion) {
     // gcm_group.measurement_time(_run_time);
     for pt_len in pt_lengths {
         let mut pt = vec![0u8; pt_len];
-        OsRng.try_fill_bytes(&mut pt).unwrap();
+        SysRng.try_fill_bytes(&mut pt).unwrap();
         // gcm_group.throughput(Throughput::Bytes(pt_len as u64));
         let ct = gcm_encrypt(&pt, &aad, &gcm_key).unwrap();
         gcm_group.bench_function(format!("Encrypt {}", pt_len), |b| b.iter(|| gcm_encrypt(&pt, &aad, &gcm_key)));
@@ -163,7 +163,7 @@ fn gcm_encrypt(
     key: &Aes256Gcm
 ) -> Result<Vec<u8>> {
     let mut nonce = [0u8; 12];
-    OsRng.try_fill_bytes(&mut nonce).unwrap();
+    SysRng.try_fill_bytes(&mut nonce).unwrap();
 
     let payload = Payload { msg: pt, aad };
     let mut ct = vec![];

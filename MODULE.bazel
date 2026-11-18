@@ -19,6 +19,7 @@ module(
 )
 
 # Might not be the exact versions but should be close enough
+bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "openssl", version = "3.3.1.bcr.1")
 bazel_dep(name = "abseil-cpp", version = "20240116.0")
 
@@ -68,48 +69,10 @@ rust.toolchain(
 )
 
 crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
-crate.spec(
-    features = ["std"],
-    package = "aead",
-    version = "0.5.2",
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//rust:Cargo.lock",
+    manifests = ["//rust:Cargo.toml"],
 )
-crate.spec(
-    package = "aes-gcm",
-    version = "0.10.3",
-)
-crate.spec(
-    package = "sha2",
-    version = "0.10.8",
-)
-crate.spec(
-    package = "rand",
-    version = "0.9.1",
-)
-crate.spec(
-    package = "hmac",
-    version = "0.12.1",
-)
-crate.spec(
-    package = "subtle",
-    version = "2.6",
-)
-crate.spec(
-    features = ["zeroize_derive"],
-    package = "zeroize",
-    version = "1.8.1",
-)
-crate.spec(
-    package = "hex",
-    version = "0.4.3",
-)
-crate.spec(
-    package = "dhat",
-    version = "0.3.3",
-)
-crate.spec(
-    features = ["html_reports"],
-    package = "criterion",
-    version = "0.3",
-)
-crate.from_specs()
+
 use_repo(crate, "crates")
